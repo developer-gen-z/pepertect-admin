@@ -1,0 +1,142 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --bg-base: #F8FAFC;
+  --bg-surface: #FFFFFF;
+  --bg-surface-alt: #F1F5F9;
+  --border: #E2E8F0;
+  --text-primary: #0F172A;
+  --text-secondary: #64748B;
+  --text-tertiary: #94A3B8;
+  --brand-primary: #2563EB;
+  --brand-primary-hover: #1D4ED8;
+  --accent-gold: #F59E0B;
+  --profit-green: #16A34A;
+  --loss-red: #DC2626;
+  --warning-amber: #F59E0B;
+  --info-purple: #8B5CF6;
+  --info-cyan: #06B6D4;
+  --focus-ring: rgba(37, 99, 235, 0.35);
+  --tint-blue: #EFF6FF;
+  --tint-blue-strong: #DBEAFE;
+  --tint-green: #ECFDF5;
+  --tint-red: #FEF2F2;
+  --tint-purple: #F5F3FF;
+  --tint-yellow: #FEFCE8;
+  --tint-cyan: #ECFEFF;
+  --tint-orange: #FFF7ED;
+  --radius: 10px;
+}
+
+.dark {
+  --bg-base: #0B0F19;
+  --bg-surface: #131826;
+  --bg-surface-alt: #1B2432;
+  --border: #242E3D;
+  --text-primary: #F4F6FA;
+  --text-secondary: #8B92A5;
+  --text-tertiary: #6B7280;
+  --brand-primary: #3B82F6;
+  --brand-primary-hover: #60A5FA;
+  --accent-gold: #F59E0B;
+  --profit-green: #34D399;
+  --loss-red: #F87171;
+  --warning-amber: #FBBF24;
+  --info-purple: #A78BFA;
+  --info-cyan: #22D3EE;
+  --focus-ring: rgba(59, 130, 246, 0.45);
+  --tint-blue: rgba(59, 130, 246, 0.12);
+  --tint-blue-strong: rgba(59, 130, 246, 0.18);
+  --tint-green: rgba(52, 211, 153, 0.12);
+  --tint-red: rgba(248, 113, 113, 0.12);
+  --tint-purple: rgba(167, 139, 250, 0.12);
+  --tint-yellow: rgba(251, 191, 36, 0.12);
+  --tint-cyan: rgba(34, 211, 238, 0.12);
+  --tint-orange: rgba(251, 146, 60, 0.12);
+}
+
+@theme {
+  --color-bg-base: var(--bg-base);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-surface-alt: var(--bg-surface-alt);
+  --color-border: var(--border);
+  --color-border-default: var(--border);
+  --color-ring: var(--focus-ring);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-brand-primary: var(--brand-primary);
+  --color-brand-primary-hover: var(--brand-primary-hover);
+  --color-accent-gold: var(--accent-gold);
+  --color-profit-green: var(--profit-green);
+  --color-loss-red: var(--loss-red);
+  --color-warning-amber: var(--warning-amber);
+  --color-info-purple: var(--info-purple);
+  --color-info-cyan: var(--info-cyan);
+  --color-tint-blue: var(--tint-blue);
+  --color-tint-green: var(--tint-green);
+  --color-tint-red: var(--tint-red);
+  --color-tint-purple: var(--tint-purple);
+  --color-tint-yellow: var(--tint-yellow);
+  --color-tint-cyan: var(--tint-cyan);
+  --color-tint-orange: var(--tint-orange);
+  --font-heading: var(--font-sora), var(--font-inter), sans-serif;
+  --font-body: var(--font-inter), sans-serif;
+  --font-mono: var(--font-ibm-plex-mono), monospace;
+  --radius-lg: var(--radius);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+  }
+  *, *::before, *::after {
+    transition-property: background-color, color, border-color;
+    transition-duration: 150ms;
+    transition-timing-function: ease;
+  }
+}
+
+.custom-scrollbar::-webkit-scrollbar { width: 6px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background-color: var(--text-tertiary); border-radius: 3px; }
+
+.card-soft {
+  background-color: var(--bg-surface);
+  border-radius: 16px;
+  border: 1px solid var(--border);
+}
+.dark .card-soft {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.icon-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.tabular-nums { font-variant-numeric: tabular-nums; }
