@@ -10,7 +10,12 @@ const ibmPlexMono = IBM_Plex_Mono({ variable: "--font-ibm-plex-mono", subsets: [
 export const metadata: Metadata = {
   title: "Pepertect Admin",
   description: "Admin panel for Pepertect — NSE Paper Trading Platform",
-  icons: { icon: '/favicon.ico' },
+  icons: { icon: '/favicon.ico', apple: '/apple-touch-icon.svg' },
+  openGraph: {
+    title: "Pepertect Admin",
+    description: "Admin panel for Pepertect — NSE Paper Trading Platform",
+    siteName: "Pepertect",
+  },
 };
 
 export const viewport: Viewport = {

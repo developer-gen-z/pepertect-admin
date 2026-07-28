@@ -17,8 +17,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'Invalid credentials' }, { status: 401 });
     }
 
-    const isValid = password === adminPassword || await bcrypt.compare(password, await bcrypt.hash(adminPassword, 1)).catch(() => false);
-    if (!isValid) {
+    // Direct string comparison (admin password stored in env)
+    if (password !== adminPassword) {
       return NextResponse.json({ success: false, error: 'Invalid credentials' }, { status: 401 });
     }
 
