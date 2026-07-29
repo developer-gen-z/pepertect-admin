@@ -3,8 +3,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useAuthStore } from '@/stores/useAuthStore';
-import { cn, timeAgo, formatDate } from '@/lib/utils';
-import { Search, Users as UsersIcon, Loader2, ChevronLeft, ChevronRight, Filter, Shield, Ban, Crown } from 'lucide-react';
+import { cn, timeAgo } from '@/lib/utils';
+import { Search, Users as UsersIcon, Loader2, ChevronLeft, ChevronRight, Trash2, AlertTriangle, CheckSquare, Square } from 'lucide-react';
 
 interface UserRow {
   id: string; name: string | null; email: string; phone: string | null;
@@ -22,6 +22,11 @@ export default function UsersPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+
+  // Selection & delete state
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const fetchUsers = useCallback(async () => {
     if (!token) return;
@@ -43,6 +48,41 @@ export default function UsersPage() {
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
+  const toggleSelect = (id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (selected.size === users.length && users.length > 0) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(users.map(u => u.id)));
+    }
+  };
+
+  const handleDelete = async () => {
+    if (selected.size === 0) return;
+    setDeleting(true);
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ids: Array.from(selected) }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSelected(new Set());
+        setShowConfirm(false);
+        fetchUsers();
+      }
+    } catch (err) { console.error(err); }
+    finally { setDeleting(false); }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -50,7 +90,57 @@ export default function UsersPage() {
           <h1 className="font-heading text-2xl font-bold text-text-primary">Users</h1>
           <p className="text-sm text-text-secondary mt-0.5">Manage platform users</p>
         </div>
+        {selected.size > 0 && (
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-medium text-text-secondary">{selected.size} selected</span>
+            <button
+              onClick={() => setShowConfirm(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-loss-red/10 border border-loss-red/20 text-loss-red text-xs font-semibold hover:bg-loss-red/20 transition-colors"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete {selected.size > 1 ? `(${selected.size})` : ''}
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {showConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="card-soft p-6 max-w-sm w-full border border-loss-red/20">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-loss-red/10">
+                <AlertTriangle className="h-5 w-5 text-loss-red" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-text-primary">Delete Users</h3>
+                <p className="text-xs text-text-secondary mt-0.5">This action cannot be undone</p>
+              </div>
+            </div>
+            <p className="text-sm text-text-secondary mb-5">
+              Are you sure you want to delete <strong className="text-text-primary">{selected.size} user(s)</strong>?
+              All their orders, positions, trades, and related data will be permanently removed from the database.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setShowConfirm(false)}
+                disabled={deleting}
+                className="px-4 py-2 rounded-lg border border-border text-sm font-medium text-text-secondary hover:bg-bg-surface-alt transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-loss-red text-white text-sm font-semibold hover:bg-loss-red/90 transition-colors disabled:opacity-60"
+              >
+                {deleting && <Loader2 className="h-4 w-4 animate-spin" />}
+                {deleting ? 'Deleting...' : 'Delete Forever'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Search & Filters */}
       <div className="card-soft p-4">
@@ -90,6 +180,13 @@ export default function UsersPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
+                <th className="px-4 py-3 w-10">
+                  <button onClick={toggleAll} className="flex items-center justify-center">
+                    {selected.size === users.length && users.length > 0
+                      ? <CheckSquare className="h-4 w-4 text-brand-primary" />
+                      : <Square className="h-4 w-4 text-text-tertiary hover:text-text-secondary" />}
+                  </button>
+                </th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-text-secondary">User</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-text-secondary">Tier</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-text-secondary hidden sm:table-cell">Trades</th>
@@ -101,12 +198,19 @@ export default function UsersPage() {
             <tbody>
               {loading ? Array.from({ length: 5 }).map((_, i) => (
                 <tr key={i} className="border-b border-border">
-                  {Array.from({ length: 6 }).map((_, j) => (
+                  {Array.from({ length: 7 }).map((_, j) => (
                     <td key={j} className="px-4 py-3"><div className="h-4 w-24 animate-pulse rounded bg-bg-surface-alt" /></td>
                   ))}
                 </tr>
               )) : users.map((u) => (
-                <tr key={u.id} className="border-b border-border hover:bg-bg-surface-alt transition-colors">
+                <tr key={u.id} className={cn('border-b border-border hover:bg-bg-surface-alt transition-colors', selected.has(u.id) && 'bg-brand-primary/5')}>
+                  <td className="px-4 py-3">
+                    <button onClick={() => toggleSelect(u.id)} className="flex items-center justify-center">
+                      {selected.has(u.id)
+                        ? <CheckSquare className="h-4 w-4 text-brand-primary" />
+                        : <Square className="h-4 w-4 text-text-tertiary hover:text-text-secondary" />}
+                    </button>
+                  </td>
                   <td className="px-4 py-3">
                     <Link href={`/users/${u.id}`} className="flex items-center gap-2.5 group">
                       <div className="flex h-8 w-8 items-center justify-center rounded-full bg-tint-blue text-brand-primary text-[11px] font-bold uppercase shrink-0">
@@ -130,8 +234,14 @@ export default function UsersPage() {
                       {u.isActive ? 'Active' : 'Inactive'}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right space-x-2">
                     <Link href={`/users/${u.id}`} className="text-xs font-semibold text-brand-primary hover:underline">View</Link>
+                    <button
+                      onClick={() => { setSelected(new Set([u.id])); setShowConfirm(true); }}
+                      className="text-xs font-semibold text-loss-red hover:underline"
+                    >
+                      Delete
+                    </button>
                   </td>
                 </tr>
               ))}
