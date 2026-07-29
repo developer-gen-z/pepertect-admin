@@ -17,7 +17,7 @@ export async function GET(req: Request) {
 
     // Database info
     let dbStatus = 'unknown';
-    let dbConnectionInfo = { provider: 'PostgreSQL', type: 'Supabase' };
+    let dbConnectionInfo: { provider: string; type: string; pooler?: string } = { provider: 'PostgreSQL', type: 'Supabase' };
     
     try {
       // Test DB connection by counting users
