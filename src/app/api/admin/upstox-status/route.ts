@@ -11,16 +11,31 @@ export async function GET(req: Request) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
+    // Get token status (worker-first, DB optional)
     const status = await getTokenStatus();
     
     return NextResponse.json({
       success: true,
       data: status,
     });
-  } catch (error) {
-    console.error('Upstox status check error:', error);
+  } catch (error: any) {
+    console.error('[upstox-status] Error:', error?.message || error);
     return NextResponse.json(
-      { success: false, error: 'Failed to check Upstox status' },
+      { 
+        success: false, 
+        error: 'Failed to check Upstox status',
+        // Return a safe default so UI doesn't break
+        data: {
+          hasToken: false,
+          isActive: false,
+          expiresAt: null,
+          isExpired: true,
+          userEmail: null,
+          isAdminMode: true,
+          workerConnected: false,
+          dbConnected: false,
+        }
+      },
       { status: 500 }
     );
   }
