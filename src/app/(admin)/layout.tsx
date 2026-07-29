@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/useAuthStore';
 import { useRouter } from 'next/navigation';
 import { AdminSidebar } from '@/components/layout/AdminSidebar';
 import { AdminHeader } from '@/components/layout/AdminHeader';
+import UpstoxReconnectBanner from '@/components/UpstoxReconnectBanner';
 import { cn } from '@/lib/utils';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -38,6 +39,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <div className={cn('transition-all duration-300', collapsed ? 'lg:pl-[72px]' : 'lg:pl-[250px]')}>
         <AdminHeader onMenuToggle={() => setMobileOpen(true)} />
         <main className="p-4 sm:p-6 max-w-7xl mx-auto">
+          <UpstoxReconnectBanner />
           {children}
         </main>
       </div>
