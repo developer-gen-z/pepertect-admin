@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
-import { AlertTriangle, ExternalLink, RefreshCw, X, Wifi, WifiOff } from 'lucide-react';
+import { AlertTriangle, ExternalLink, RefreshCw, X, Wifi, WifiOff, Server } from 'lucide-react';
 
 interface TokenStatus {
   hasToken: boolean;
@@ -11,6 +11,7 @@ interface TokenStatus {
   isExpired: boolean;
   userEmail: string | null;
   isAdminMode: boolean;
+  workerConnected: boolean; // NEW
 }
 
 export default function UpstoxReconnectBanner() {
@@ -40,8 +41,8 @@ export default function UpstoxReconnectBanner() {
     };
 
     checkStatus();
-    // Check every 60 seconds
-    const interval = setInterval(checkStatus, 60000);
+    // Check every 30 seconds for real-time status updates
+    const interval = setInterval(checkStatus, 30000);
     return () => clearInterval(interval);
   }, [token]);
 
@@ -65,53 +66,86 @@ export default function UpstoxReconnectBanner() {
   // Don't render while loading or if dismissed
   if (loading || dismissed) return null;
 
-  // Don't show banner if token is active and not expired
-  if (status?.isActive && !status?.isExpired) {
+  // Determine overall connection state
+  // Priority: Worker connected > DB token active > expired/disconnected
+  const isLiveConnected = status?.workerConnected === true || 
+                          (status?.isActive === true && !status?.isExpired);
+
+  // Show GREEN "Connected" banner when live data is flowing
+  if (isLiveConnected && status) {
     return (
-      <div className="mb-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3 flex items-center gap-3">
-        <Wifi className="h-4 w-4 text-emerald-500 shrink-0" />
+      <div className="mb-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 flex items-center gap-3">
+        <div className="flex items-center gap-2 shrink-0">
+          <Wifi className="h-5 w-5 text-emerald-500" />
+          {status.workerConnected && (
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+          )}
+        </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
-            Upstox Connected
+          <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
+            ✅ Live Data Connected
+            {status.workerConnected && (
+              <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                WebSocket Active
+              </span>
+            )}
           </p>
-          <p className="text-xs text-emerald-600/70 dark:text-emerald-500/70">
-            {status.userEmail ? `Account: ${status.userEmail}` : 'Admin token active'} • 
-            {status.expiresAt ? ` Expires ${new Date(status.expiresAt).toLocaleString('en-IN')}` : ' Active'}
+          <p className="text-xs text-emerald-700/70 dark:text-emerald-400/70 mt-0.5">
+            {status.userEmail ? `Account: ${status.userEmail}` : 'Admin Token Active'}
+            {status.expiresAt ? ` • Expires ${new Date(status.expiresAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}` : ''}
           </p>
         </div>
-        <button
-          onClick={() => setDismissed(true)}
-          className="text-emerald-600/50 hover:text-emerald-700 dark:text-emerald-400/50"
-        >
-          <X className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={handleRefresh}
+            disabled={checking}
+            className="text-emerald-600/50 hover:text-emerald-700 dark:text-emerald-400/50 transition-colors"
+            title="Refresh Status"
+          >
+            <RefreshCw className={`h-4 w-4 ${checking ? 'animate-spin' : ''}`} />
+          </button>
+          <button
+            onClick={() => setDismissed(true)}
+            className="text-emerald-600/50 hover:text-emerald-700 dark:text-emerald-400/50 transition-colors"
+            title="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       </div>
     );
   }
 
-  // Show warning/reconnect banner when token is expired or missing
+  // Show WARNING/DISCONNECTED banner when no live data
   return (
-    <div className="mb-4 rounded-xl bg-amber-500/10 border border-amber-500/20 p-4 flex items-start gap-3">
-      <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+    <div className="mb-4 rounded-xl bg-red-500/10 border border-red-500/20 p-4 flex items-start gap-3">
+      <div className="flex items-center gap-2 shrink-0 mt-0.5">
+        <WifiOff className="h-5 w-5 text-red-500" />
+      </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-          ⚠️ Admin: Upstox Token Expired / Not Connected
+        <p className="text-sm font-semibold text-red-800 dark:text-red-300">
+          ⚠️ Live Data Disconnected
         </p>
-        <p className="text-xs text-amber-700/80 dark:text-amber-400/80 mt-1">
+        <p className="text-xs text-red-700/80 dark:text-red-400/80 mt-1">
           {status?.hasToken 
-            ? 'The Upstox access token has expired. Real-time market data may not be available.'
-            : 'No Upstox token found. Connect your Upstox account to enable real-time data for all users.'
+            ? status?.isExpired 
+              ? 'Upstox access token has expired. Website users cannot see real-time market data.'
+              : 'Token exists but WebSocket connection to Cloudflare Worker is not active.'
+            : 'No Upstox token found. Connect your Upstox account to enable real-time data.'
           }
         </p>
-        <div className="flex items-center gap-2 mt-3">
+        <div className="flex flex-wrap items-center gap-2 mt-3">
           <a
-            href="https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=undefined"
+            href={status?.isAdminMode ? "https://api.upstox.com/v2/login/authorization/dialog?response_type=code" : "#"}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium rounded-lg transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white text-xs font-medium rounded-lg transition-colors"
           >
             <ExternalLink className="h-3 w-3" />
-            Connect Upstox
+            Reconnect Upstox
           </a>
           <button
             onClick={handleRefresh}
@@ -119,13 +153,14 @@ export default function UpstoxReconnectBanner() {
             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-bg-surface hover:bg-bg-surface-alt border border-border text-text-secondary text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
           >
             <RefreshCw className={`h-3 w-3 ${checking ? 'animate-spin' : ''}`} />
-            Refresh Status
+            Check Again
           </button>
         </div>
       </div>
       <button
         onClick={() => setDismissed(true)}
-        className="text-amber-600/50 hover:text-amber-700 dark:text-amber-400/50"
+        className="text-red-600/50 hover:text-red-700 dark:text-red-400/50 shrink-0"
+        title="Dismiss"
       >
         <X className="h-4 w-4" />
       </button>
