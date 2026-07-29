@@ -58,10 +58,15 @@ async function checkWorkerHealth(): Promise<boolean> {
     if (!res.ok) return false;
     
     const data = await res.json();
-    // Worker returns { connected: true/false, ... }
-    // Also accept other possible response formats
-    return data.connected === true || 
+    // Worker returns various formats:
+    // - { ok: true } - basic health
+    // - { connected: true } - explicit connection status
+    // - { status: "connected" } - string status
+    // Accept ALL of these as "worker is running"
+    return data.ok === true ||
+           data.connected === true || 
            data.status === 'connected' || 
+           data.status === 'ok' ||
            data.websocket === 'active' ||
            data.ws_connected === true ||
            !!data.feeds?.length; // If feeds are present, WS is working
@@ -84,8 +89,11 @@ async function checkWorkerHealth(): Promise<boolean> {
         method: 'GET',
         signal: AbortSignal.timeout(2000) 
       });
-      // If worker responds at all, consider it might be running
-      return res.ok;
+      if (res.ok) {
+        const data = await res.json();
+        // Accept any response that shows worker is alive
+        return data.ok === true || data.connected === true || data.status === 'ok';
+      }
     } catch {}
     
     return false;
