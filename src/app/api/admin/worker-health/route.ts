@@ -36,7 +36,7 @@ export async function GET() {
         healthData = await healthRes.json();
         workerReachable = healthData.ok === true;
       }
-    } catch (e) {
+    } catch (e: any) {
       console.log('[worker-health] Worker unreachable:', e?.message || e);
     }
     
@@ -73,7 +73,7 @@ export async function GET() {
           hasToken,
         });
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('[worker-health] /stats failed:', e?.message || e);
     }
     
@@ -102,14 +102,15 @@ export async function GET() {
       checkedAt: new Date().toISOString(),
     }, { status: 200 });
     
-  } catch (error: any) {
-    console.error('[worker-health] Error:', error?.message || error);
+  } catch (error: unknown) {
+    const err = error as any;
+    console.error('[worker-health] Error:', err?.message || error);
     return NextResponse.json({
       success: false,
       healthy: false,
       workerReachable: false,
       upstoxReady: false,
-      error: error?.message || 'Worker unreachable',
+      error: err?.message || 'Worker unreachable',
       status: 'error',
       checkedAt: new Date().toISOString(),
     }, { status: 200 }); // Return 200 so client can handle gracefully
