@@ -4,55 +4,33 @@ import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { AlertTriangle, ExternalLink, RefreshCw, X, Wifi, WifiOff } from 'lucide-react';
 
-interface TokenStatus {
-  hasToken: boolean;
-  isActive: boolean;
-  expiresAt: string | null;
-  isExpired: boolean;
-  userEmail: string | null;
-  isAdminMode: boolean;
-  workerConnected: boolean;
-  dbConnected: boolean;
+interface WorkerHealthResponse {
+  success: boolean;
+  healthy: boolean;
+  status?: number;
+  data?: any;
+  error?: string;
+  checkedAt: string;
 }
-
-// Cloudflare Worker URL - read from env or use default
-const WORKER_URL = process.env.NEXT_PUBLIC_UPSTOX_WORKER_URL || 
-                   'https://upstox-realtime.hzero9393.workers.dev';
 
 export default function UpstoxReconnectBanner() {
   const { token } = useAuthStore();
-  const [status, setStatus] = useState<TokenStatus | null>(null);
+  const [workerHealthy, setWorkerHealthy] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [dismissed, setDismissed] = useState(false);
   const [checking, setChecking] = useState(false);
 
-  // CLIENT-SIDE worker health check (works even if DB is down!)
+  // Check worker health via API proxy (avoids CORS issues)
   const checkWorkerHealth = async (): Promise<boolean> => {
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
-      
-      // Use relative URL or absolute URL
-      const workerHealthUrl = `${WORKER_URL.replace(/\/ws$/, '')}/health`;
-      
-      const res = await fetch(workerHealthUrl, {
+      console.log('[UpstoxBanner] Checking worker health via API...');
+      const res = await fetch('/api/admin/worker-health', {
         method: 'GET',
-        signal: controller.signal,
-        cache: 'no-store', // Don't cache
+        cache: 'no-store',
       });
-      
-      clearTimeout(timeout);
-      
-      if (!res.ok) return false;
-      
-      const data = await res.json();
+      const data: WorkerHealthResponse = await res.json();
       console.log('[UpstoxBanner] Worker health response:', data);
-      
-      // Accept multiple response formats
-      return data.ok === true ||
-             data.connected === true || 
-             data.status === 'connected' || 
-             data.status === 'ok';
+      return data.healthy === true;
     } catch (e) {
       console.error('[UpstoxBanner] Worker health check failed:', e);
       return false;
@@ -63,54 +41,9 @@ export default function UpstoxReconnectBanner() {
     if (!token) return;
     
     const checkStatus = async () => {
-      try {
-        // Try server API first
-        const apiRes = await fetch('/api/admin/upstox-status', {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: 'no-store',
-        });
-        const apiData = await apiRes.json();
-        
-        if (apiData.success) {
-          // If API says worker is NOT connected, do our own client-side check
-          // This handles cases where server can't reach worker but client can
-          if (!apiData.data.workerConnected) {
-            console.log('[UpstoxBanner] Server says disconnected, checking from client...');
-            const clientWorkerOk = await checkWorkerHealth();
-            if (clientWorkerOk) {
-              // Client can reach worker! Override with connected status
-              setStatus({
-                ...apiData.data,
-                workerConnected: true,
-                isActive: true,
-                hasToken: true,
-                isExpired: false,
-              });
-              setLoading(false);
-              return;
-            }
-          }
-          setStatus(apiData.data);
-        }
-      } catch (err) {
-        console.error('Failed to check Upstox status via API:', err);
-        
-        // Fallback: direct client-side worker check
-        console.log('[UpstoxBanner] Trying direct worker check...');
-        const workerOk = await checkWorkerHealth();
-        setStatus({
-          hasToken: workerOk,
-          isActive: workerOk,
-          expiresAt: null,
-          isExpired: !workerOk,
-          userEmail: 'admin@pepertect.com',
-          isAdminMode: true,
-          workerConnected: workerOk,
-          dbConnected: false,
-        });
-      } finally {
-        setLoading(false);
-      }
+      const isHealthy = await checkWorkerHealth();
+      setWorkerHealthy(isHealthy);
+      setLoading(false);
     };
 
     checkStatus();
@@ -122,55 +55,16 @@ export default function UpstoxReconnectBanner() {
 
   const handleRefresh = async () => {
     setChecking(true);
-    try {
-      // Do both checks
-      const [apiRes, workerOk] = await Promise.all([
-        fetch('/api/admin/upstox-status', {
-          headers: { Authorization: `Bearer ${token}` },
-        }).then(r => r.json()).catch(() => ({ success: false })),
-        checkWorkerHealth(),
-      ]);
-      
-      if (apiRes.success) {
-        // If client can reach worker but server can't, use client status
-        if (!apiRes.data.workerConnected && workerOk) {
-          setStatus({
-            ...apiRes.data,
-            workerConnected: true,
-            isActive: true,
-            hasToken: true,
-            isExpired: false,
-          });
-        } else {
-          setStatus(apiRes.data);
-        }
-      } else {
-        setStatus({
-          hasToken: workerOk,
-          isActive: workerOk,
-          expiresAt: null,
-          isExpired: !workerOk,
-          userEmail: 'admin@pepertect.com',
-          isAdminMode: true,
-          workerConnected: workerOk,
-          dbConnected: false,
-        });
-      }
-    } catch (err) {
-      console.error('Refresh failed:', err);
-    } finally {
-      setChecking(false);
-    }
+    const isHealthy = await checkWorkerHealth();
+    setWorkerHealthy(isHealthy);
+    setChecking(false);
   };
 
   // Don't render while loading or if dismissed
   if (loading || dismissed) return null;
 
-  // Determine overall connection state
-  const isLiveConnected = status?.workerConnected === true;
-
-  // Show GREEN "Connected" banner when live data is flowing
-  if (isLiveConnected && status) {
+  // Show GREEN "Connected" banner when worker is healthy
+  if (workerHealthy === true) {
     return (
       <div className="mb-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 flex items-center gap-3">
         <div className="flex items-center gap-2 shrink-0">
@@ -212,7 +106,7 @@ export default function UpstoxReconnectBanner() {
     );
   }
 
-  // Show WARNING/DISCONNECTED banner when no live data
+  // Show WARNING/DISCONNECTED banner when worker is not healthy
   return (
     <div className="mb-4 rounded-xl bg-red-500/10 border border-red-500/20 p-4 flex items-start gap-3">
       <div className="flex items-center gap-2 shrink-0 mt-0.5">
@@ -227,7 +121,7 @@ export default function UpstoxReconnectBanner() {
         </p>
         <div className="flex flex-wrap items-center gap-2 mt-3">
           <a
-            href={`https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${process.env.NEXT_PUBLIC_UPSTOX_API_KEY || ''}&redirect_uri=${encodeURIComponent(process.env.UPSTOX_REDIRECT_URI || '')}`}
+            href="https://api.upstox.com/v2/login/authorization/dialog?response_type=code"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white text-xs font-medium rounded-lg transition-colors"
