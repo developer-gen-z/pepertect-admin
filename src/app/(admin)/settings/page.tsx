@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Settings, Database, Shield, Server, Globe, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { Settings, Database, Shield, Server, Globe, CheckCircle2, XCircle, Loader2, Wrench, Power, AlertTriangle } from 'lucide-react';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { adminFetch } from '@/lib/admin-fetch';
 
 interface SettingsData {
   database: {
@@ -48,6 +49,52 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // Maintenance mode state
+  const [maint, setMaint] = useState<{ enabled: boolean; message: string; updatedAt: string | null } | null>(null);
+  const [maintLoading, setMaintLoading] = useState(true);
+  const [maintSaving, setMaintSaving] = useState(false);
+  const [maintMessage, setMaintMessage] = useState('');
+  const [maintError, setMaintError] = useState('');
+  const [maintSuccess, setMaintSuccess] = useState('');
+
+  async function fetchMaintenance() {
+    try {
+      const res: any = await adminFetch('/api/admin/maintenance');
+      if (res.success) {
+        setMaint(res.data);
+        setMaintMessage(res.data.message);
+      }
+    } catch (e: any) {
+      if (e?.message !== 'Session expired') setMaintError('Failed to load maintenance status');
+    } finally {
+      setMaintLoading(false);
+    }
+  }
+
+  async function toggleMaintenance(enable: boolean) {
+    setMaintSaving(true);
+    setMaintError('');
+    setMaintSuccess('');
+    try {
+      const res: any = await adminFetch('/api/admin/maintenance', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: enable, message: maintMessage }),
+      });
+      if (res.success) {
+        setMaint(res.data);
+        setMaintSuccess(res.message);
+        setTimeout(() => setMaintSuccess(''), 4000);
+      } else {
+        setMaintError(res.error || 'Failed to update');
+      }
+    } catch (e: any) {
+      if (e?.message !== 'Session expired') setMaintError(e?.message || 'Network error');
+    } finally {
+      setMaintSaving(false);
+    }
+  }
+
   useEffect(() => {
     if (!token) return;
 
@@ -72,10 +119,16 @@ export default function SettingsPage() {
     }
 
     fetchSettings();
-    
+
     // Refresh every 60 seconds
     const interval = setInterval(fetchSettings, 60000);
     return () => clearInterval(interval);
+  }, [token]);
+
+  // Fetch maintenance status
+  useEffect(() => {
+    if (!token) return;
+    fetchMaintenance();
   }, [token]);
 
   if (loading && !data) {
@@ -125,6 +178,101 @@ export default function SettingsPage() {
             Refresh
           </button>
         )}
+      </div>
+
+      {/* Maintenance Mode Card — full width */}
+      <div className={`card-soft p-5 border-2 ${maint?.enabled ? 'border-amber-500/40 bg-amber-500/5' : 'border-transparent'}`}>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`icon-tile ${maint?.enabled ? 'bg-amber-500/15' : 'bg-tint-green'}`}>
+              {maint?.enabled
+                ? <Wrench className="h-[18px] w-[18px] text-amber-500" />
+                : <Power className="h-[18px] w-[18px] text-profit-green" />}
+            </div>
+            <div className="min-w-0">
+              <h2 className="font-heading text-base font-semibold text-text-primary">Site Mode</h2>
+              <p className="text-[11px] text-text-secondary">
+                Control the main website (pepertect.vercel.app) state
+              </p>
+            </div>
+          </div>
+          {/* Status badge */}
+          <div className="flex items-center gap-2 shrink-0">
+            {maintLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin text-text-tertiary" />
+            ) : maint?.enabled ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-600 text-xs font-semibold">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                Maintenance Mode
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-600 text-xs font-semibold">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                Production (Live)
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Description textarea */}
+        <div className="mt-4">
+          <label className="text-xs font-medium text-text-secondary block mb-1.5">
+            Maintenance message (shown to users on the main site)
+          </label>
+          <textarea
+            value={maintMessage}
+            onChange={(e) => setMaintMessage(e.target.value)}
+            disabled={maintSaving}
+            rows={2}
+            placeholder="We're performing scheduled maintenance. We'll be back shortly!"
+            className="w-full rounded-lg border border-border bg-bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-brand-primary/30 focus:border-brand-primary transition-all disabled:opacity-60 resize-none"
+          />
+        </div>
+
+        {/* Alert / success messages */}
+        {maintError && (
+          <div className="mt-3 flex items-center gap-2 rounded-lg bg-tint-red/50 border border-loss-red/20 px-3 py-2">
+            <AlertTriangle className="h-4 w-4 text-loss-red shrink-0" />
+            <p className="text-xs text-loss-red font-medium">{maintError}</p>
+          </div>
+        )}
+        {maintSuccess && (
+          <div className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-2">
+            <CheckCircle2 className="h-4 w-4 text-profit-green shrink-0" />
+            <p className="text-xs text-profit-green font-medium">{maintSuccess}</p>
+          </div>
+        )}
+
+        {/* Action buttons */}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {maint?.enabled ? (
+            <button
+              onClick={() => toggleMaintenance(false)}
+              disabled={maintSaving}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-profit-green hover:bg-profit-green/90 disabled:opacity-60 text-white text-xs font-semibold transition-colors"
+            >
+              {maintSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Power className="h-3.5 w-3.5" />}
+              Switch to Production (Live)
+            </button>
+          ) : (
+            <button
+              onClick={() => toggleMaintenance(true)}
+              disabled={maintSaving}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white text-xs font-semibold transition-colors"
+            >
+              {maintSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" />}
+              Enable Maintenance Mode
+            </button>
+          )}
+          <span className="text-[10px] text-text-tertiary">
+            {maint?.updatedAt && `Last changed: ${new Date(maint.updatedAt).toLocaleString()}`}
+          </span>
+        </div>
+
+        <p className="mt-3 text-[10px] text-text-tertiary leading-relaxed">
+          💡 When maintenance mode is ON, all visitors to pepertect.vercel.app will see the maintenance
+          message above instead of the app. Toggle back to Production to make the site live again.
+        </p>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
