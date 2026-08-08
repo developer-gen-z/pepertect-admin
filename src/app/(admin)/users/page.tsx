@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { adminFetch } from '@/lib/admin-fetch';
 import { cn, timeAgo } from '@/lib/utils';
 import { Search, Users as UsersIcon, Loader2, ChevronLeft, ChevronRight, Trash2, AlertTriangle, CheckSquare, Square } from 'lucide-react';
 
@@ -36,13 +37,12 @@ export default function UsersPage() {
       if (search) params.set('search', search);
       if (tierFilter) params.set('tier', tierFilter);
       if (statusFilter) params.set('isActive', statusFilter);
-      const res = await fetch(`/api/admin/users?${params}`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
+      const data = await adminFetch(`/api/admin/users?${params}`);
       if (data.success) {
         setUsers(data.data.users);
         setTotalPages(data.data.pages);
       }
-    } catch (err) { console.error(err); }
+    } catch (err) { if (!(err instanceof Error && err.message === 'Session expired')) console.error(err); }
     finally { setLoading(false); }
   }, [token, page, search, tierFilter, statusFilter]);
 
@@ -68,18 +68,17 @@ export default function UsersPage() {
     if (selected.size === 0) return;
     setDeleting(true);
     try {
-      const res = await fetch('/api/admin/users', {
+      const data = await adminFetch('/api/admin/users', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids: Array.from(selected) }),
       });
-      const data = await res.json();
       if (data.success) {
         setSelected(new Set());
         setShowConfirm(false);
         fetchUsers();
       }
-    } catch (err) { console.error(err); }
+    } catch (err) { if (!(err instanceof Error && err.message === 'Session expired')) console.error(err); }
     finally { setDeleting(false); }
   };
 

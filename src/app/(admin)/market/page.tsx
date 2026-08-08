@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { adminFetch } from '@/lib/admin-fetch';
 import { cn, formatNumber } from '@/lib/utils';
 import { TrendingUp, Loader2, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 
@@ -32,10 +33,9 @@ export default function MarketPage() {
     try {
       const params = new URLSearchParams({ type: tab, page: String(page), limit: '20' });
       if (search) params.set('search', search);
-      const res = await fetch(`/api/admin/market?${params}`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
+      const data = await adminFetch(`/api/admin/market?${params}`);
       if (data.success) { setItems(data.data.items); setTotalPages(data.data.pages); }
-    } catch (err) { console.error(err); }
+    } catch (err) { if (!(err instanceof Error && err.message === 'Session expired')) console.error(err); }
     finally { setLoading(false); }
   }, [token, page, search, tab]);
 

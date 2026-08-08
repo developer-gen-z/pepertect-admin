@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { adminFetch } from '@/lib/admin-fetch';
 import { cn, formatINR, formatNumber, timeAgo } from '@/lib/utils';
 import {
   Users, UserCheck, Crown, ShoppingCart, Gift, Briefcase,
   UserPlus, TrendingUp, TrendingDown, DollarSign, Activity,
-  Loader2, ArrowUpRight,
+  Loader2, ArrowUpRight, AlertCircle,
 } from 'lucide-react';
 
 interface StatsData {
@@ -28,17 +29,46 @@ export default function DashboardPage() {
   const { token } = useAuthStore();
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
-    fetch('/api/admin/stats', { headers: { Authorization: `Bearer ${token}` } })
-      .then(res => res.json())
-      .then(data => { if (data.success) setStats(data.data); })
-      .catch(console.error)
+    setLoading(true);
+    setError(null);
+    adminFetch('/api/admin/stats')
+      .then((data: any) => {
+        if (data.success) {
+          setStats(data.data);
+        } else {
+          setError(data.error || 'Failed to load stats');
+        }
+      })
+      .catch((e) => {
+        // adminFetch already handles 401 → redirect to /login
+        if (e?.message !== 'Session expired') {
+          setError(e?.message || 'Network error');
+        }
+      })
       .finally(() => setLoading(false));
   }, [token]);
 
   if (loading) return <LoadingSkeleton />;
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-3">
+        <AlertCircle className="h-10 w-10 text-loss-red" />
+        <p className="text-sm font-medium text-text-primary">Failed to load dashboard</p>
+        <p className="text-xs text-text-secondary max-w-md text-center">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-2 px-4 py-2 rounded-lg bg-brand-primary text-white text-xs font-semibold hover:bg-brand-primary-hover"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

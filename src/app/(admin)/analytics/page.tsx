@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { adminFetch } from '@/lib/admin-fetch';
 import { cn, formatINR } from '@/lib/utils';
 import { BarChart3, Users, Crown, ShoppingCart, TrendingUp, TrendingDown, DollarSign, Loader2 } from 'lucide-react';
 
@@ -18,10 +19,9 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     if (!token) return;
-    fetch('/api/admin/stats', { headers: { Authorization: `Bearer ${token}` } })
-      .then(res => res.json())
-      .then(data => { if (data.success) setStats(data.data); })
-      .catch(console.error)
+    adminFetch('/api/admin/stats')
+      .then((data) => { if (data.success) setStats(data.data); })
+      .catch((e) => { if (e?.message !== 'Session expired') console.error(e); })
       .finally(() => setLoading(false));
   }, [token]);
 

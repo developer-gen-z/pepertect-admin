@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { adminFetch } from '@/lib/admin-fetch';
 import { cn, formatDateTime, timeAgo } from '@/lib/utils';
 import { CreditCard, Loader2, ChevronLeft, ChevronRight, Search, Gift, Crown } from 'lucide-react';
 
@@ -30,10 +31,9 @@ export default function SubscriptionsPage() {
       if (planFilter) params.set('plan', planFilter);
       if (statusFilter) params.set('status', statusFilter);
       if (trialFilter) params.set('trial', trialFilter);
-      const res = await fetch(`/api/admin/subscriptions?${params}`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
+      const data = await adminFetch(`/api/admin/subscriptions?${params}`);
       if (data.success) { setSubs(data.data.subscriptions); setTotalPages(data.data.pages); }
-    } catch (err) { console.error(err); }
+    } catch (err) { if (!(err instanceof Error && err.message === 'Session expired')) console.error(err); }
     finally { setLoading(false); }
   }, [token, page, planFilter, statusFilter, trialFilter]);
 

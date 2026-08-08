@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { adminFetch } from '@/lib/admin-fetch';
 import { cn, formatINR, formatNumber, formatDateTime, timeAgo } from '@/lib/utils';
 import {
   ArrowLeft, User, Mail, Phone, Shield, Crown, Wallet,
@@ -37,16 +38,15 @@ export default function UserDetailPage() {
 
   useEffect(() => {
     if (!token || !params.id) return;
-    fetch(`/api/admin/users/${params.id}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(res => res.json())
-      .then(data => {
+    adminFetch(`/api/admin/users/${params.id}`)
+      .then((data) => {
         if (data.success) {
           setUser(data.data);
           setEditTier(data.data.tier);
           setEditActive(data.data.isActive);
         }
       })
-      .catch(console.error)
+      .catch((e) => { if (e?.message !== 'Session expired') console.error(e); })
       .finally(() => setLoading(false));
   }, [token, params.id]);
 
@@ -54,19 +54,18 @@ export default function UserDetailPage() {
     if (!token || !params.id) return;
     setSaving(true); setMsg(null);
     try {
-      const res = await fetch(`/api/admin/users/${params.id}`, {
+      const data = await adminFetch(`/api/admin/users/${params.id}`, {
         method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tier: editTier, isActive: editActive }),
       });
-      const data = await res.json();
       if (data.success) {
         setUser(prev => prev ? { ...prev, tier: editTier, isActive: editActive } : prev);
         setMsg({ type: 'success', text: 'User updated successfully' });
       } else {
         setMsg({ type: 'error', text: data.error || 'Update failed' });
       }
-    } catch { setMsg({ type: 'error', text: 'Network error' }); }
+    } catch (e) { if (!(e instanceof Error && e.message === 'Session expired')) setMsg({ type: 'error', text: 'Network error' }); }
     finally { setSaving(false); }
   };
 

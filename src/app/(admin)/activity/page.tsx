@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { adminFetch } from '@/lib/admin-fetch';
 import { Activity, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface LogRow {
@@ -21,10 +22,9 @@ export default function ActivityPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/admin/activity?page=${page}&limit=30`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
+      const data = await adminFetch(`/api/admin/activity?page=${page}&limit=30`);
       if (data.success) { setLogs(data.data.logs); setTotalPages(data.data.pages); }
-    } catch (err) { console.error(err); }
+    } catch (err) { if (!(err instanceof Error && err.message === 'Session expired')) console.error(err); }
     finally { setLoading(false); }
   }, [token, page]);
 

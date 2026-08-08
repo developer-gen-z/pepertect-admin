@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { adminFetch } from '@/lib/admin-fetch';
 import { cn, timeAgo } from '@/lib/utils';
 import { LifeBuoy, Loader2, ChevronLeft, ChevronRight, MessageSquare, Clock, AlertTriangle } from 'lucide-react';
 
@@ -29,10 +30,9 @@ export default function TicketsPage() {
       const params = new URLSearchParams({ page: String(page), limit: '20' });
       if (statusFilter) params.set('status', statusFilter);
       if (priorityFilter) params.set('priority', priorityFilter);
-      const res = await fetch(`/api/admin/tickets?${params}`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
+      const data = await adminFetch(`/api/admin/tickets?${params}`);
       if (data.success) { setTickets(data.data.tickets); setTotalPages(data.data.pages); }
-    } catch (err) { console.error(err); }
+    } catch (err) { if (!(err instanceof Error && err.message === 'Session expired')) console.error(err); }
     finally { setLoading(false); }
   }, [token, page, statusFilter, priorityFilter]);
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { adminFetch } from '@/lib/admin-fetch';
 import { cn, formatNumber, formatDateTime, timeAgo } from '@/lib/utils';
 import { ShoppingCart, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 
@@ -29,10 +30,9 @@ export default function OrdersPage() {
       const params = new URLSearchParams({ page: String(page), limit: '20' });
       if (statusFilter) params.set('status', statusFilter);
       if (sideFilter) params.set('side', sideFilter);
-      const res = await fetch(`/api/admin/orders?${params}`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
+      const data = await adminFetch(`/api/admin/orders?${params}`);
       if (data.success) { setOrders(data.data.orders); setTotalPages(data.data.pages); }
-    } catch (err) { console.error(err); }
+    } catch (err) { if (!(err instanceof Error && err.message === 'Session expired')) console.error(err); }
     finally { setLoading(false); }
   }, [token, page, statusFilter, sideFilter]);
 

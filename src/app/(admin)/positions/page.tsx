@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { adminFetch } from '@/lib/admin-fetch';
 import { cn, formatNumber, timeAgo } from '@/lib/utils';
 import { Briefcase, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 
@@ -25,10 +26,9 @@ export default function PositionsPage() {
     setLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), limit: '20', status: statusFilter });
-      const res = await fetch(`/api/admin/positions?${params}`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
+      const data = await adminFetch(`/api/admin/positions?${params}`);
       if (data.success) { setPositions(data.data.positions); setTotalPages(data.data.pages); }
-    } catch (err) { console.error(err); }
+    } catch (err) { if (!(err instanceof Error && err.message === 'Session expired')) console.error(err); }
     finally { setLoading(false); }
   }, [token, page, statusFilter]);
 

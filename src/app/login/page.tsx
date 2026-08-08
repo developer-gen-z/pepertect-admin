@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { useTheme } from 'next-themes';
 import { Zap, Sun, Moon, Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react';
@@ -13,9 +13,16 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [sessionExpired, setSessionExpired] = useState(false);
   const { login } = useAuthStore();
   const { theme, setTheme } = useTheme();
   const router = useRouter();
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.search.includes('reason=expired')) {
+      setSessionExpired(true);
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,6 +74,14 @@ export default function LoginPage() {
           <p className="text-sm text-text-secondary mt-1">Access the admin dashboard</p>
 
           <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+            {sessionExpired && (
+              <div className="flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5">
+                <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+                <p className="text-xs text-amber-700 font-medium">
+                  Your session has expired. Please sign in again.
+                </p>
+              </div>
+            )}
             <div>
               <label className="text-xs font-medium text-text-secondary block mb-1.5">Email</label>
               <input

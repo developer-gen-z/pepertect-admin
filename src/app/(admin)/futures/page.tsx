@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { adminFetch } from '@/lib/admin-fetch';
 import { cn, formatNumber, timeAgo } from '@/lib/utils';
 import { TrendingUp, Loader2, ChevronLeft, ChevronRight, Database } from 'lucide-react';
 
@@ -34,14 +35,13 @@ export default function FuturesPage() {
     setLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), limit: '50' });
-      const res = await fetch(`/api/admin/futures?${params}`, { headers: { Authorization: `Bearer ${token}` } });
-      const data = await res.json();
+      const data = await adminFetch(`/api/admin/futures?${params}`);
       if (data.success) {
         setFutures(data.data.futures);
         setTotal(data.data.total);
         setTotalPages(data.data.pages);
       }
-    } catch (err) { console.error(err); }
+    } catch (err) { if (!(err instanceof Error && err.message === 'Session expired')) console.error(err); }
     finally { setLoading(false); }
   }, [token, page]);
 
