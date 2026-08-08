@@ -12,9 +12,11 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 }
 
 export async function createToken(payload: { userId: string; role: string; email: string }): Promise<string> {
+  // Read expiry from env (default 365d = ~1 year, effectively permanent for admin)
+  const expiry = process.env.JWT_EXPIRES_IN || '365d';
   return new SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
-    .setExpirationTime('24h')
+    .setExpirationTime(expiry)
     .setIssuedAt()
     .sign(JWT_SECRET);
 }
