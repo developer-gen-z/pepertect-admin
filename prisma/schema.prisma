@@ -1,3 +1,9 @@
+// ============================================
+// Pepertect v4 — Prisma Schema
+// Paper Trading Platform
+// Database: PostgreSQL (Supabase)
+// ============================================
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,24 +13,36 @@ datasource db {
   url       = env("DATABASE_URL")
 }
 
+// ============================================
+// 1. USERS & AUTHENTICATION
+// ============================================
+
 model User {
   id            String    @id @default(cuid())
   email         String    @unique
   name          String?
-  passwordHash  String?
+  passwordHash  String?                        // null for OAuth users
   avatar        String?
   phone         String?
-  role          String    @default("USER")
-  tier          String    @default("FREE")
-  virtualCapital Decimal   @default(100000)
+  role          String    @default("USER")      // USER, ADMIN
+  tier          String    @default("FREE")      // FREE, PREMIUM
+  virtualCapital Decimal   @default(100000)     // Virtual trading balance
   isActive      Boolean   @default(true)
   googleId      String?   @unique
+  // Security & preferences
   twoFactorEnabled  Boolean @default(false)
-  twoFactorSecret   String?
-  language          String  @default("en")
+  twoFactorSecret   String?                        // TOTP secret (base32)
+  language          String  @default("en")         // en, hi, mr, ta, te, bn, gu, kn
+  // Notification preferences (JSON-encoded map of type→bool)
   notifSettings     Json?
+  // Onboarding & Trial tracking (DEDICATED FIELDS - not in JSON!)
+  onboardingCompleted   Boolean   @default(false)  // Has user completed onboarding?
+  onboardingCompletedAt DateTime?                   // When did they complete it?
+  trialActivatedAt      DateTime?                   // When was free trial activated?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
+  // Relations
   orders         Order[]
   positions      Position[]
   portfolio      Portfolio?
@@ -39,6 +57,10 @@ model User {
   trades         Trade[]
   upstoxToken    UpstoxToken?
   gamification   UserGamification?
+
+  reviews       Review[]
+  reviewVotes   ReviewVote[]
+
   @@map("users")
 }
 
@@ -50,7 +72,9 @@ model Session {
   ip        String?
   expiresAt DateTime
   createdAt DateTime @default(now())
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@map("sessions")
 }
 
@@ -63,16 +87,22 @@ model ActiveDevice {
   ip        String?
   lastSeen  DateTime @default(now())
   createdAt DateTime @default(now())
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@map("active_devices")
 }
 
+// ============================================
+// 2. MARKET DATA
+// ============================================
+
 model Stock {
   id          String   @id @default(cuid())
-  symbol      String   @unique
-  name        String
+  symbol      String   @unique               // e.g., "RELIANCE"
+  name        String                          // e.g., "Reliance Industries Ltd"
   exchange    String   @default("NSE")
-  segment     String   @default("EQUITY")
+  segment     String   @default("EQUITY")     // EQUITY
   sector      String?
   lotSize     Int      @default(1)
   tickSize    Float    @default(0.05)
@@ -87,6 +117,8 @@ model Stock {
   volume      Int?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  // Relations
   options       Option[]
   futures       Future[]
   watchlist     Watchlist[]
@@ -94,13 +126,14 @@ model Stock {
   trades        Trade[]
   orders        Order[]
   positions     Position[]
+
   @@map("stocks")
 }
 
 model Index {
   id        String   @id @default(cuid())
-  name      String   @unique
-  symbol    String   @unique
+  name      String   @unique               // e.g., "NIFTY 50"
+  symbol    String   @unique               // e.g., "NIFTY"
   exchange  String   @default("NSE")
   lastPrice Float?
   change    Float?
@@ -110,7 +143,9 @@ model Index {
   open      Float?
   close     Float?
   updatedAt DateTime @updatedAt
+
   sectors   Sector[]
+
   @@map("indices")
 }
 
@@ -120,33 +155,43 @@ model Sector {
   indexId   String?
   changePct Float?
   updatedAt DateTime @updatedAt
+
   index Index? @relation(fields: [indexId], references: [id], onDelete: SetNull)
+
   @@map("sectors")
 }
+
+// ============================================
+// 3. TRADING — ORDERS, POSITIONS, TRADES
+// ============================================
 
 model Order {
   id           String   @id @default(cuid())
   userId       String
   stockId      String
-  symbol       String
-  side         String
-  orderType    String
+  symbol       String                         // Denormalized for quick access
+  side         String                         // BUY, SELL
+  orderType    String                         // MARKET, LIMIT, SL
   quantity     Int
-  price        Float?
-  triggerPrice Float?
-  status       String   @default("PENDING")
+  price        Float?                         // null for MARKET orders
+  triggerPrice Float?                         // for SL orders
+  status       String   @default("PENDING")   // PENDING, FILLED, CANCELLED, REJECTED
   filledPrice  Float?
   filledQty    Int      @default(0)
-  segment      String
-  optionType   String?
-  strikePrice  Float?
-  expiry       DateTime?
-  reason       String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  segment      String                         // EQUITY, FUTURES, OPTIONS
+  optionType   String?                        // CE, PE (for options)
+  strikePrice  Float?                         // (for options)
+  expiry       DateTime?                      // (for derivatives)
+  instrumentKey String?                        // Upstox instrument key for the exact instrument
+  reason       String?                        // cancellation/rejection reason
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   stock Stock  @relation(fields: [stockId], references: [id])
   trade Trade?
+
+  @@index([userId, status])
   @@map("orders")
 }
 
@@ -155,28 +200,40 @@ model Position {
   userId       String
   stockId      String
   symbol       String
-  side         String
+  side         String                         // LONG, SHORT
   quantity     Int
   avgPrice     Float
   currentPrice Float    @default(0)
   pnl          Float    @default(0)
   pnlPct       Float    @default(0)
   investedAmt  Float
-  segment      String
-  optionType   String?
+  segment      String                         // EQUITY, FUTURES, OPTIONS
+  optionType   String?                        // CE, PE
   strikePrice  Float?
   expiry       DateTime?
+  /* Upstox instrument_key for the EXACT instrument this position tracks.
+   * For OPTIONS: e.g. "NSE_FO|63811" (the strike's CE/PE leg key)
+   * For EQUITY:  e.g. "NSE_EQ|INE002A01018" (the stock's ISIN-based key)
+   * For FUTURES: e.g. "NSE_FO|..." (the future contract key)
+   * Stored at order-placement time so the PositionsPage can subscribe to
+   * live ticks for the exact instrument WITHOUT needing to re-fetch the
+   * option chain to resolve the strike's key. Old positions (pre-this-field)
+   * will have null and fall back to the option-instrument-resolver. */
   instrumentKey String?
   stopLoss     Float?
   target       Float?
-  status       String   @default("OPEN")
+  status       String   @default("OPEN")      // OPEN, CLOSED, SQUAREDOFF
   exitPrice    Float?
-  exitReason   String?
+  exitReason   String?                        // MANUAL, SL_HIT, TARGET_HIT, EXPIRY
   openedAt     DateTime @default(now())
   closedAt     DateTime?
+
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   stock Stock  @relation(fields: [stockId], references: [id])
   trade Trade?
+
+  @@index([userId, status])
+  @@index([userId, status, openedAt])
   @@map("positions")
 }
 
@@ -196,20 +253,27 @@ model Trade {
   expiry       DateTime?
   pnl          Float    @default(0)
   brokerage    Float    @default(0)
-  type         String
+  type         String                         // OPEN, CLOSE
   createdAt    DateTime @default(now())
+
   user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  stock    Stock    @relation(fields: [stockId], references: [id])
-  order    Order?   @relation(fields: [orderId], references: [id])
+  stock    Stock   @relation(fields: [stockId], references: [id])
+  order    Order?  @relation(fields: [orderId], references: [id])
   position Position? @relation(fields: [positionId], references: [id])
+
+  @@index([userId, createdAt])
   @@map("trades")
 }
+
+// ============================================
+// 4. DERIVATIVES — OPTIONS, FUTURES, OPTION CHAIN
+// ============================================
 
 model Option {
   id          String   @id @default(cuid())
   stockId     String
   symbol      String
-  optionType  String
+  optionType  String                         // CE, PE
   strikePrice Float
   expiry      DateTime
   lotSize     Int      @default(1)
@@ -219,8 +283,14 @@ model Option {
   volume      Int      @default(0)
   oi          Int      @default(0)
   iv          Float?
+  delta       Float?
+  gamma       Float?
+  theta       Float?
+  vega        Float?
   updatedAt   DateTime @updatedAt
+
   stock Stock @relation(fields: [stockId], references: [id], onDelete: Cascade)
+
   @@unique([stockId, optionType, strikePrice, expiry])
   @@map("options")
 }
@@ -236,9 +306,11 @@ model Future {
   changePct   Float    @default(0)
   volume      Int      @default(0)
   oi          Int      @default(0)
-  marginPct   Float    @default(20)
+  marginPct   Float    @default(20)          // margin percentage required
   updatedAt   DateTime @updatedAt
+
   stock Stock @relation(fields: [stockId], references: [id], onDelete: Cascade)
+
   @@unique([stockId, expiry])
   @@map("futures")
 }
@@ -257,10 +329,16 @@ model OptionChain {
   peVolume    Int      @default(0)
   peIv        Float?
   updatedAt   DateTime @updatedAt
+
   stock Stock @relation(fields: [stockId], references: [id], onDelete: Cascade)
+
   @@unique([stockId, expiry, strikePrice])
   @@map("option_chains")
 }
+
+// ============================================
+// 5. PORTFOLIO & TRANSACTIONS
+// ============================================
 
 model Portfolio {
   id              String   @id @default(cuid())
@@ -277,44 +355,63 @@ model Portfolio {
   winningTrades   Int      @default(0)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions Transaction[]
+
   @@map("portfolios")
 }
 
 model Transaction {
   id          String   @id @default(cuid())
   portfolioId String
-  type        String
+  type        String                         // CREDIT, DEBIT, TRADE_SETTLEMENT
   amount      Decimal
-  balance     Decimal
+  balance     Decimal                         // balance after transaction
   description String?
-  reference   String?
+  reference   String?                        // orderId or subscriptionId
   createdAt   DateTime @default(now())
+
   portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
   @@map("transactions")
 }
+
+// ============================================
+// 6. WATCHLIST
+// ============================================
 
 model Watchlist {
   id        String   @id @default(cuid())
   userId    String
   stockId   String
   createdAt DateTime @default(now())
+
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   stock Stock @relation(fields: [stockId], references: [id], onDelete: Cascade)
+
   @@unique([userId, stockId])
   @@map("watchlists")
 }
 
+// ============================================
+// 7. LEARNING PATH & GAMIFICATION
+// ============================================
+
 model LearningPath {
-  id          String   @id @default(cuid())
-  title       String
-  description String?
-  level       String
-  order       Int      @default(0)
-  isPremium   Boolean   @default(false)
-  createdAt   DateTime @default(now())
+  id            String   @id @default(cuid())
+  title         String
+  description   String?
+  level         String                         // BEGINNER, INTERMEDIATE, ADVANCED
+  category      String                         // e.g. "Stock Market Basics", "Technical Analysis", "Options Trading"
+  icon          String?                        // emoji or icon name
+  order         Int      @default(0)
+  isPremium     Boolean  @default(false)
+  totalXP       Int      @default(0)           // XP awarded on completing all modules
+  createdAt     DateTime @default(now())
+
   modules Module[]
+
   @@map("learning_paths")
 }
 
@@ -323,220 +420,137 @@ model Module {
   learningPathId String
   title          String
   description    String?
-  content        String?
+  content        String?                        // Markdown content
+  videoUrl       String?                        // YouTube embed URL
+  videoChapters  String?                        // JSON array of {time, title} for video chapters
   order          Int      @default(0)
-  duration       Int?
+  duration       Int?                           // estimated minutes
+  xpReward       Int      @default(10)           // XP earned on completing this module
   createdAt      DateTime @default(now())
+
   learningPath LearningPath @relation(fields: [learningPathId], references: [id], onDelete: Cascade)
   challenges    Challenge[]
   progress      UserProgress[]
+
   @@map("modules")
 }
 
 model Challenge {
-  id         String   @id @default(cuid())
-  moduleId   String
-  title      String
-  type       String
-  questions  String?
-  passingScore Int?
-  reward     String?
-  createdAt  DateTime @default(now())
+  id           String   @id @default(cuid())
+  moduleId     String
+  title        String
+  type         String                          // QUIZ, TRADE_SIMULATION, STRATEGY, PATTERN_RECOGNITION
+  questions    String?                         // JSON array of question objects
+  passingScore Int      @default(70)           // percentage to pass
+  xpReward     Int      @default(15)           // XP for passing the quiz
+  coinReward   Int      @default(10)           // coins for perfect score
+  createdAt    DateTime @default(now())
+
   module Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   quizAttempts QuizAttempt[]
+
   @@map("challenges")
 }
 
 model UserProgress {
-  id           String   @id @default(cuid())
-  userId       String
-  moduleId     String
-  status       String   @default("NOT_STARTED")
-  score        Float?
-  completedAt  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id              String    @id @default(cuid())
+  userId          String
+  moduleId        String
+  status          String    @default("NOT_STARTED") // NOT_STARTED, IN_PROGRESS, COMPLETED
+  score           Float?
+  videoProgress   Int       @default(0)             // video watch progress (0-100%)
+  videoTimestamp  Int       @default(0)             // last watched video position in seconds
+  notes           String?                             // user's saved notes (JSON)
+  completedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   module Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
   @@unique([userId, moduleId])
   @@map("user_progress")
 }
-
-model Subscription {
-  id            String    @id @default(cuid())
-  userId        String
-  plan          String    @default("FREE")
-  status        String    @default("ACTIVE")
-  startDate     DateTime  @default(now())
-  endDate       DateTime?
-  autoRenew     Boolean   @default(false)
-  razorpaySubId String?   @unique
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime @updatedAt
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  payments Payment[]
-  @@map("subscriptions")
-}
-
-model Payment {
-  id               String   @id @default(cuid())
-  subscriptionId   String
-  razorpayPaymentId String   @unique
-  amount           Decimal
-  currency         String   @default("INR")
-  status           String   @default("PENDING")
-  orderId          String?
-  createdAt        DateTime @default(now())
-  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  @@map("payments")
-}
-
-model SupportTicket {
-  id        String   @id @default(cuid())
-  userId    String
-  subject   String
-  status    String   @default("OPEN")
-  priority  String   @default("NORMAL")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  messages TicketMessage[]
-  @@map("support_tickets")
-}
-
-model TicketMessage {
-  id         String   @id @default(cuid())
-  ticketId   String
-  senderId   String
-  senderType String   @default("USER")
-  content    String
-  createdAt  DateTime @default(now())
-  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  @@map("ticket_messages")
-}
-
-model PlatformSetting {
-  id    String @id @default(cuid())
-  key   String @unique
-  value String
-  updatedAt DateTime @updatedAt
-  @@map("platform_settings")
-}
-
-model ActivityLog {
-  id        String   @id @default(cuid())
-  userId    String
-  action    String
-  details   String?
-  ip        String?
-  userAgent String?
-  createdAt DateTime @default(now())
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  @@index([userId, createdAt])
-  @@map("activity_logs")
-}
-
-model Notification {
-  id        String   @id @default(cuid())
-  userId    String
-  type      String
-  title     String
-  message   String
-  isRead    Boolean   @default(false)
-  data      String?
-  createdAt DateTime @default(now())
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  @@index([userId, isRead])
-  @@map("notifications")
-}
-
-model UpstoxToken {
-  id              String   @id @default(cuid())
-  userId          String   @unique
-  accessToken     String
-  refreshToken    String?
-  expiresAt       DateTime
-  scope           String?
-  tokenType       String   @default("Bearer")
-  userEmail       String?
-  userIdUpstox    String?
-  broker          String   @default("UPSTOX")
-  isActive        Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  @@map("upstox_tokens")
-}
-
-// ============================================
-// 14. GAMIFICATION & LEARNING (synced from main app)
-// ============================================
 
 model QuizAttempt {
   id          String   @id @default(cuid())
   userId      String
   challengeId String
-  score       Int
-  correct     Int
-  total       Int
+  score       Int                              // percentage score
+  correct     Int                              // number of correct answers
+  total       Int                              // total questions
   xpEarned    Int      @default(0)
   coinsEarned Int      @default(0)
   completedAt DateTime @default(now())
+
   challenge Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
   @@index([userId, challengeId])
   @@map("quiz_attempts")
 }
 
+// ---- Gamification: XP, Levels, Streaks, Badges, Coins ----
+
 model UserGamification {
-  id               String   @id @default(cuid())
-  userId           String   @unique
-  xp               Int      @default(0)
-  level            Int      @default(1)
-  coins            Int      @default(0)
-  streak           Int      @default(0)
-  longestStreak    Int      @default(0)
-  lastActivity     DateTime?
-  streakFreeze     Int      @default(1)
-  lessonsCompleted Int      @default(0)
-  quizzesPassed    Int      @default(0)
-  perfectQuizzes   Int      @default(0)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  badgesEarned     UserBadge[]
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  xp            Int      @default(0)
+  level         Int      @default(1)
+  coins         Int      @default(0)
+  streak        Int      @default(0)           // current daily streak
+  longestStreak Int      @default(0)           // all-time longest streak
+  lastActivity  DateTime?                       // last day user did any learning activity
+  streakFreeze  Int      @default(1)           // available streak freezes (1 free)
+  lessonsCompleted  Int   @default(0)
+  quizzesPassed     Int   @default(0)
+  perfectQuizzes    Int   @default(0)           // 100% score quizzes
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badgesEarned UserBadge[]
+
   @@map("user_gamification")
 }
 
 model Badge {
   id          String   @id @default(cuid())
-  name        String
+  name        String                          // e.g. "First Lesson"
   description String?
-  icon        String
-  category    String
+  icon        String                          // emoji
+  category    String                          // LESSON, STREAK, QUIZ, ACHIEVEMENT, SPECIAL
   xpReward    Int      @default(0)
   createdAt   DateTime @default(now())
+
   earnedBy    UserBadge[]
+
   @@map("badges")
 }
 
 model UserBadge {
-  id       String   @id @default(cuid())
-  userId   String
-  badgeId  String
-  earnedAt DateTime @default(now())
+  id        String   @id @default(cuid())
+  userId    String
+  badgeId   String
+  earnedAt  DateTime @default(now())
+
   gamification UserGamification @relation(fields: [userId], references: [id], onDelete: Cascade)
   badge        Badge           @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
   @@unique([userId, badgeId])
   @@map("user_badges")
 }
 
+// ---- Daily Challenge & Word of the Day ----
+
 model DailyChallenge {
   id        String   @id @default(cuid())
-  date      String   @unique
-  questions String?
-  topic     String?
+  date      String   @unique                   // YYYY-MM-DD
+  questions String?                         // JSON array of 5 MCQ questions
+  topic     String?                         // e.g. "Market Basics", "Technical Analysis"
   createdAt DateTime @default(now())
+
   attempts  DailyChallengeAttempt[]
+
   @@map("daily_challenges")
 }
 
@@ -549,9 +563,11 @@ model DailyChallengeAttempt {
   total       Int
   xpEarned    Int      @default(0)
   coinsEarned Int      @default(0)
-  timeTaken   Int?
+  timeTaken   Int?                            // seconds taken
   completedAt DateTime @default(now())
+
   challenge DailyChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
   @@unique([userId, challengeId])
   @@map("daily_challenge_attempts")
 }
@@ -560,26 +576,249 @@ model WordOfDay {
   id        String   @id @default(cuid())
   word      String
   meaning   String
-  example   String?
-  category  String?
-  date      String   @unique
+  example   String?                         // usage in context
+  category  String?                         // e.g. "Greeks", "Order Types", "Technical"
+  date      String   @unique                 // YYYY-MM-DD
   createdAt DateTime @default(now())
+
   @@map("word_of_day")
 }
 
 // ============================================
-// 15. CHART CACHE (synced from main app)
+// 8. SUBSCRIPTIONS & PAYMENTS
+// ============================================
+
+model Subscription {
+  id            String    @id @default(cuid())
+  userId        String
+  plan          String    @default("FREE")       // FREE, PREMIUM
+  status        String    @default("ACTIVE")      // ACTIVE, EXPIRED, CANCELLED
+  startDate     DateTime  @default(now())
+  endDate       DateTime?
+  autoRenew     Boolean   @default(false)
+  razorpaySubId String?   @unique
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payments Payment[]
+
+  @@map("subscriptions")
+}
+
+model Payment {
+  id               String   @id @default(cuid())
+  subscriptionId   String
+  razorpayPaymentId String   @unique
+  amount           Decimal
+  currency         String   @default("INR")
+  status           String   @default("PENDING") // PENDING, SUCCESS, FAILED, REFUNDED
+  orderId          String?                          // Razorpay order ID
+  createdAt        DateTime @default(now())
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+// ============================================
+// 9. SUPPORT
+// ============================================
+
+model SupportTicket {
+  id        String   @id @default(cuid())
+  userId    String
+  subject   String
+  status    String   @default("OPEN")        // OPEN, IN_PROGRESS, RESOLVED, CLOSED
+  priority  String   @default("NORMAL")       // LOW, NORMAL, HIGH, URGENT
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages TicketMessage[]
+
+  @@map("support_tickets")
+}
+
+model TicketMessage {
+  id         String   @id @default(cuid())
+  ticketId   String
+  senderId   String                          // userId or admin userId
+  senderType String   @default("USER")       // USER, ADMIN
+  content    String
+  createdAt  DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@map("ticket_messages")
+}
+
+// ============================================
+// 10. PLATFORM — SETTINGS & LOGS
+// ============================================
+
+model PlatformSetting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+  updatedAt DateTime @updatedAt
+
+  @@map("platform_settings")
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String                         // LOGIN, LOGOUT, TRADE, etc.
+  details   String?                        // JSON metadata
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("activity_logs")
+}
+
+// ============================================
+// 11. NOTIFICATIONS
+// ============================================
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String                         // TRADE, SYSTEM, SUBSCRIPTION, PRICE_ALERT
+  title     String
+  message   String
+  isRead    Boolean   @default(false)
+  data      String?                         // JSON for additional metadata
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+// ============================================
+// 12. BROKER INTEGRATION — UPSTOX
+// ============================================
+
+model UpstoxToken {
+  id              String   @id @default(cuid())
+  userId          String   @unique              // 1 token per user
+  accessToken     String                        // JWT from Upstox OAuth
+  refreshToken    String?
+  expiresAt       DateTime                      // typically 24 hours from issue
+  scope           String?
+  tokenType       String   @default("Bearer")
+  userEmail       String?
+  userIdUpstox    String?                       // Upstox user_id (e.g. 5UC698)
+  broker          String   @default("UPSTOX")
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("upstox_tokens")
+}
+
+// ============================================
+// 14. REVIEWS & FEEDBACK
+// ============================================
+
+model Review {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String                          // Review title
+  content     String                          // Review content (plain text)
+  rating      Int                             // 1-5 stars
+  category    String   @default("GENERAL")     // GENERAL, BUG_REPORT, FEATURE_REQUEST
+  status      String   @default("PENDING")     // PENDING, APPROVED, REJECTED, HIDDEN
+
+  // Bug report specific
+  bugSteps       String?                        // Steps to reproduce (bug report)
+  bugExpected    String?                        // Expected behavior
+  bugActual      String?                        // Actual behavior
+  // Bug report status (separate from review status)
+  bugStatus      String?                        // OPEN, INVESTIGATING, IN_PROGRESS, FIXED, CLOSED
+
+  // Feature request specific
+  whyNeeded       String?                        // Why this feature is needed
+  additionalDetails String?                     // Additional context for feature request
+  featureStatus  String?                        // UNDER_CONSIDERATION, PLANNED, IN_DEVELOPMENT, RELEASED
+
+  // Moderation
+  priority    String   @default("NORMAL")       // LOW, NORMAL, HIGH, URGENT
+  helpfulCount Int      @default(0)             // Denormalized count of helpful votes
+
+  // Screenshot
+  screenshotUrl String?                        // Uploaded screenshot URL (bug reports)
+
+  // Device info (private — never expose publicly)
+  device      String?
+  browser     String?
+  os          String?
+  screenSize  String?
+  ip          String?                        // Private: never in API response
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  votes      ReviewVote[]
+  replies    ReviewReply[]
+
+  @@index([userId, status])
+  @@index([category, status])
+  @@index([status, createdAt])
+  @@map("reviews")
+}
+
+model ReviewVote {
+  id       String   @id @default(cuid())
+  reviewId String
+  userId   String
+  createdAt DateTime @default(now())
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, userId])
+  @@map("review_votes")
+}
+
+model ReviewReply {
+  id        String   @id @default(cuid())
+  reviewId  String
+  content    String                          // Admin reply content (plain text)
+  createdAt  DateTime @default(now())
+
+  review    Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@map("review_replies")
+}
+
+// ============================================
+// 15. CHART CACHE — persistent candle cache
+// Cross-instance cache for Yahoo Finance candles.
+// Survives Vercel cold starts so popular symbols
+// load instantly without re-hitting Yahoo.
 // ============================================
 
 model ChartCache {
-  id          String   @id @default(cuid())
-  symbol      String
-  interval    String
-  tf          String
-  dateKey     String   @default("")
-  candles     Json
-  candleCount Int      @default(0)
-  fetchedAt   DateTime @default(now())
+  id            String   @id @default(cuid())
+  symbol        String                          // e.g. RELIANCE, NIFTY
+  interval      String                          // 1minute, 5minute, 15minute, 30minute, 60minute, day, week
+  tf            String                          // 1D, 10D, 5M, 15M, 5Y, etc.
+  dateKey       String   @default("")           // YYYY-MM-DD (intraday) or YYYY-MM (daily/weekly)
+  candles       Json                            // [{t,o,h,l,c,v}, ...]
+  candleCount   Int      @default(0)
+  fetchedAt     DateTime @default(now())
+
   @@unique([symbol, interval, tf, dateKey])
   @@index([symbol, interval, tf])
   @@map("chart_cache")

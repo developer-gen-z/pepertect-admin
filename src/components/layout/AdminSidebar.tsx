@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, Users, CreditCard, ShoppingCart, Briefcase,
   LifeBuoy, BarChart3, Settings, Activity, ChevronLeft, ChevronRight,
-  Zap, TrendingUp, X, Wifi, Flame,
+  Zap, TrendingUp, X, Wifi, Flame, Star,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -18,6 +18,7 @@ const NAV_ITEMS = [
   { href: '/positions', label: 'Positions', icon: Briefcase },
   { href: '/futures', label: 'Futures', icon: Flame },
   { href: '/tickets', label: 'Support', icon: LifeBuoy },
+  { href: '/reviews', label: 'Reviews', icon: Star },
   { href: '/market', label: 'Market', icon: TrendingUp },
   { href: '/analytics', label: 'Analytics', icon: BarChart3 },
   { href: '/activity', label: 'Activity Logs', icon: Activity },
