@@ -3,149 +3,123 @@ import { verifyToken, extractBearerToken } from '@/lib/auth';
 
 /**
  * POST /api/admin/worker-reconnect
- * 
- * Allows admin to push Upstox token to Cloudflare Worker and trigger WebSocket reconnection.
- * This is useful when:
- * - Worker's WebSocket connection drops
- * - Token needs to be refreshed on worker side
- * - Admin wants to force reconnect without going through Upstox OAuth flow again
+ *
+ * Checks REAL Upstox WebSocket connection status via /stats endpoint.
+ * If upstoxReady is false, pushes the env UPSTOX_ACCESS_TOKEN to the
+ * worker and triggers reconnection.
  */
 export async function POST(req: Request) {
   try {
-    // Verify admin authentication
     const token = extractBearerToken(req.headers.get('authorization'));
     const payload = token ? await verifyToken(token) : null;
-    
+
     if (!payload || payload.role !== 'ADMIN') {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    const workerUrl = process.env.NEXT_PUBLIC_UPSTOX_WORKER_URL || 
-                      'https://upstox-realtime.hzero9393.workers.dev';
-    
+    const workerUrl = (process.env.NEXT_PUBLIC_UPSTOX_WORKER_URL ||
+                      'https://upstox-realtime.hzero9393.workers.dev').replace(/\/ws$/, '');
     const accessToken = process.env.UPSTOX_ACCESS_TOKEN;
 
-    console.log('[worker-reconnect] Attempting to reconnect WebSocket via Worker...');
+    // ─── Step 1: Check REAL status via /stats ───────────────────────────
+    let upstoxReady = false;
+    let hasToken = false;
+    let workerReachable = false;
 
-    // Step 1: Check worker health first
-    let workerHealthy = false;
     try {
-      const healthRes = await fetch(`${workerUrl}/health`, {
+      const statsRes = await fetch(`${workerUrl}/stats`, {
         method: 'GET',
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(8000),
+        headers: { Accept: 'application/json' },
       });
-      if (healthRes.ok) {
-        const healthData = await healthRes.json();
-        workerHealthy = healthData.ok === true || healthData.connected === true;
+      if (statsRes.ok) {
+        const stats = await statsRes.json();
+        upstoxReady = stats.upstoxReady === true;
+        hasToken = stats.hasToken === true;
+        workerReachable = true;
       }
     } catch (e) {
-      console.error('[worker-reconnect] Worker health check failed:', e);
+      console.error('[worker-reconnect] /stats failed:', e);
     }
 
-    // If worker is already healthy, no need to reconnect
-    if (workerHealthy) {
+    // If already connected, no action needed
+    if (upstoxReady) {
       return NextResponse.json({
         success: true,
-        message: 'Worker is already connected and healthy',
+        message: '✅ Upstox WebSocket is already connected and streaming live data',
         action: 'none',
-        data: { status: 'already_connected' },
+        data: { status: 'already_connected', upstoxReady, hasToken },
       });
     }
 
-    // Step 2: If we have an access token, try to push it to worker
+    // ─── Step 2: Push token to worker ───────────────────────────────────
     if (!accessToken) {
       return NextResponse.json({
         success: false,
-        error: 'No Upstox access token configured. Please set UPSTOX_ACCESS_TOKEN environment variable.',
+        error: 'No Upstox access token configured. Please re-authorize with Upstox.',
         action: 'required_oauth',
         authUrl: `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${process.env.UPSTOX_API_KEY || ''}&redirect_uri=${process.env.UPSTOX_REDIRECT_URI || ''}`,
       }, { status: 400 });
     }
 
-    // Step 3: Push token to worker for reconnection
     let pushResult = false;
     let pushError = '';
 
     try {
-      console.log('[worker-reconnect] Pushing token to worker...');
       const pushRes = await fetch(`${workerUrl}/refresh-token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: accessToken }),
         signal: AbortSignal.timeout(10000),
       });
-
       pushResult = pushRes.ok;
-      
       if (!pushRes.ok) {
-        const errText = await pushRes.text();
-        pushError = `Worker returned ${pushRes.status}: ${errText}`;
+        pushError = `Worker returned ${pushRes.status}: ${await pushRes.text()}`;
       }
-      
-      console.log('[worker-reconnect] Push result:', pushResult ? 'SUCCESS' : 'FAILED');
     } catch (e) {
       pushError = e instanceof Error ? e.message : 'Unknown error';
       console.error('[worker-reconnect] Push failed:', pushError);
     }
 
-    // Step 4: Try to trigger explicit reconnect endpoint (if worker supports it)
-    let reconnectResult = false;
-    try {
-      console.log('[worker-reconnect] Triggering reconnect...');
-      const reconnectRes = await fetch(`${workerUrl}/reconnect`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force: true }),
-        signal: AbortSignal.timeout(10000),
-      });
-      reconnectResult = reconnectRes.ok;
-      console.log('[worker-reconnect] Reconnect result:', reconnectResult ? 'SUCCESS' : 'NOT SUPPORTED');
-    } catch (e) {
-      console.log('[worker-reconnect] /reconnect endpoint not available or failed:', e);
-      // This is OK - some workers might not have this endpoint
-    }
+    // ─── Step 3: Wait & verify via /stats ───────────────────────────────
+    await new Promise((resolve) => setTimeout(resolve, 3000));
 
-    // Step 5: Verify reconnection worked
-    await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s for worker to connect
-
-    let finalStatus = false;
+    let finalUpstoxReady = false;
     try {
-      const finalHealthRes = await fetch(`${workerUrl}/health`, {
+      const finalStatsRes = await fetch(`${workerUrl}/stats`, {
         method: 'GET',
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(8000),
       });
-      if (finalHealthRes.ok) {
-        const finalData = await finalHealthRes.json();
-        finalStatus = finalData.ok === true || finalData.connected === true;
+      if (finalStatsRes.ok) {
+        const finalStats = await finalStatsRes.json();
+        finalUpstoxReady = finalStats.upstoxReady === true;
       }
     } catch {}
 
     return NextResponse.json({
-      success: finalStatus || pushResult,
-      message: finalStatus 
-        ? '✅ WebSocket reconnected successfully!' 
-        : pushResult 
-          ? 'Token pushed to worker. Worker may take a few seconds to connect...'
-          : '❌ Failed to reconnect. You may need to re-authorize with Upstox.',
-      action: finalStatus ? 'reconnected' : pushResult ? 'token_pushed' : 'failed',
+      success: finalUpstoxReady,
+      message: finalUpstoxReady
+        ? '✅ WebSocket reconnected successfully! Live data is now streaming.'
+        : pushResult
+          ? '⚠️ Token was pushed but Upstox rejected it. The token may be expired — please re-authorize with Upstox.'
+          : '❌ Failed to push token to worker.',
+      action: finalUpstoxReady ? 'reconnected' : pushResult ? 'token_pushed_but_rejected' : 'failed',
       data: {
-        workerWasHealthy: workerHealthy,
+        workerReachable,
+        wasUpstoxReady: upstoxReady,
+        finalUpstoxReady,
         tokenPushed: pushResult,
-        reconnectTriggered: reconnectResult,
-        finalHealth: finalStatus,
         hasAccessToken: !!accessToken,
       },
-      error: !finalStatus && !pushResult ? pushError : undefined,
+      error: !finalUpstoxReady && !pushResult ? pushError : undefined,
+      authUrl: !finalUpstoxReady
+        ? `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${process.env.UPSTOX_API_KEY || ''}&redirect_uri=${process.env.UPSTOX_REDIRECT_URI || ''}`
+        : undefined,
     });
-
   } catch (error: any) {
     console.error('[worker-reconnect] Error:', error?.message || error);
     return NextResponse.json(
-      { 
-        success: false, 
-        error: 'Failed to reconnect worker', 
-        message: error?.message || 'Unknown error occurred'
-      },
+      { success: false, error: 'Failed to reconnect worker', message: error?.message || 'Unknown error' },
       { status: 500 }
     );
   }
@@ -153,51 +127,48 @@ export async function POST(req: Request) {
 
 /**
  * GET /api/admin/worker-reconnect
- * Returns current status and available actions
  */
 export async function GET(req: Request) {
   try {
     const token = extractBearerToken(req.headers.get('authorization'));
     const payload = token ? await verifyToken(token) : null;
-    
+
     if (!payload || payload.role !== 'ADMIN') {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    const workerUrl = process.env.NEXT_PUBLIC_UPSTOX_WORKER_URL || 
-                      'https://upstox-realtime.hzero9393.workers.dev';
+    const workerUrl = (process.env.NEXT_PUBLIC_UPSTOX_WORKER_URL ||
+                      'https://upstox-realtime.hzero9393.workers.dev').replace(/\/ws$/, '');
 
-    // Check current status
-    let workerHealthy = false;
-    let hasAccessToken = !!process.env.UPSTOX_ACCESS_TOKEN;
+    let upstoxReady = false;
+    let workerReachable = false;
+    let hasToken = false;
 
     try {
-      const healthRes = await fetch(`${workerUrl}/health`, {
+      const statsRes = await fetch(`${workerUrl}/stats`, {
         method: 'GET',
         signal: AbortSignal.timeout(5000),
       });
-      if (healthRes.ok) {
-        const healthData = await healthRes.json();
-        workerHealthy = healthData.ok === true || healthData.connected === true;
+      if (statsRes.ok) {
+        const stats = await statsRes.json();
+        upstoxReady = stats.upstoxReady === true;
+        hasToken = stats.hasToken === true;
+        workerReachable = true;
       }
     } catch {}
+
+    const hasAccessToken = !!process.env.UPSTOX_ACCESS_TOKEN;
 
     return NextResponse.json({
       success: true,
       data: {
-        status: workerHealthy ? 'connected' : 'disconnected',
+        status: upstoxReady ? 'connected' : workerReachable ? 'worker_up_upstox_down' : 'disconnected',
+        upstoxReady,
+        workerReachable,
+        hasToken,
         canReconnect: hasAccessToken,
         hasAccessToken,
-        actions: [
-          ...(hasAccessToken ? ['push_token', 'trigger_reconnect'] : []),
-          'check_health',
-          ...(hasAccessToken ? [] : ['oauth_required']),
-        ],
-        endpoints: {
-          health: `${workerUrl}/health`,
-          refresh: `${workerUrl}/refresh-token`,
-          reconnect: `${workerUrl}/reconnect`,
-        },
+        authUrl: `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${process.env.UPSTOX_API_KEY || ''}&redirect_uri=${process.env.UPSTOX_REDIRECT_URI || ''}`,
       },
     });
   } catch (error: any) {
