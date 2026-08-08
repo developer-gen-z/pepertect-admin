@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { verifyToken, extractBearerToken } from '@/lib/auth';
+import { batchFetchLtp, calcPnl } from '@/lib/live-quote';
 
 export async function GET(req: NextRequest) {
   try {
@@ -31,9 +32,46 @@ export async function GET(req: NextRequest) {
       db.position.count({ where }),
     ]);
 
+    // ─── Enrich OPEN positions with LIVE prices from Cloudflare Worker ───
+    let enriched = positions;
+    let livePriceCount = 0;
+
+    if (status === 'OPEN' && positions.length > 0) {
+      // Collect all unique instrument keys
+      const instrumentKeys = positions
+        .map((p) => p.instrumentKey)
+        .filter((k): k is string => !!k);
+
+      // Batch-fetch live LTP from worker
+      const livePrices = await batchFetchLtp(instrumentKeys);
+      livePriceCount = livePrices.size;
+
+      // Map live prices back onto positions & recompute P&L
+      enriched = positions.map((p) => {
+        const livePrice = p.instrumentKey ? livePrices.get(p.instrumentKey) : undefined;
+        if (livePrice !== undefined && livePrice > 0) {
+          const { pnl, pnlPct } = calcPnl(p.side, p.avgPrice, livePrice, p.quantity);
+          return {
+            ...p,
+            currentPrice: livePrice,
+            pnl,
+            pnlPct,
+          };
+        }
+        return p;
+      });
+    }
+
     return NextResponse.json({
       success: true,
-      data: { positions, total, page, limit, pages: Math.ceil(total / limit) },
+      data: {
+        positions: enriched,
+        total,
+        page,
+        limit,
+        pages: Math.ceil(total / limit),
+        livePriceCount, // how many instruments got live prices
+      },
     });
   } catch (error) {
     console.error('Positions fetch error:', error);

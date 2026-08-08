@@ -38,6 +38,7 @@ model User {
   activityLogs   ActivityLog[]
   trades         Trade[]
   upstoxToken    UpstoxToken?
+  gamification   UserGamification?
   @@map("users")
 }
 
@@ -342,6 +343,7 @@ model Challenge {
   reward     String?
   createdAt  DateTime @default(now())
   module Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  quizAttempts QuizAttempt[]
   @@map("challenges")
 }
 
@@ -464,4 +466,121 @@ model UpstoxToken {
   updatedAt       DateTime @updatedAt
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@map("upstox_tokens")
+}
+
+// ============================================
+// 14. GAMIFICATION & LEARNING (synced from main app)
+// ============================================
+
+model QuizAttempt {
+  id          String   @id @default(cuid())
+  userId      String
+  challengeId String
+  score       Int
+  correct     Int
+  total       Int
+  xpEarned    Int      @default(0)
+  coinsEarned Int      @default(0)
+  completedAt DateTime @default(now())
+  challenge Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  @@index([userId, challengeId])
+  @@map("quiz_attempts")
+}
+
+model UserGamification {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  xp               Int      @default(0)
+  level            Int      @default(1)
+  coins            Int      @default(0)
+  streak           Int      @default(0)
+  longestStreak    Int      @default(0)
+  lastActivity     DateTime?
+  streakFreeze     Int      @default(1)
+  lessonsCompleted Int      @default(0)
+  quizzesPassed    Int      @default(0)
+  perfectQuizzes   Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badgesEarned     UserBadge[]
+  @@map("user_gamification")
+}
+
+model Badge {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  icon        String
+  category    String
+  xpReward    Int      @default(0)
+  createdAt   DateTime @default(now())
+  earnedBy    UserBadge[]
+  @@map("badges")
+}
+
+model UserBadge {
+  id       String   @id @default(cuid())
+  userId   String
+  badgeId  String
+  earnedAt DateTime @default(now())
+  gamification UserGamification @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge        Badge           @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  @@unique([userId, badgeId])
+  @@map("user_badges")
+}
+
+model DailyChallenge {
+  id        String   @id @default(cuid())
+  date      String   @unique
+  questions String?
+  topic     String?
+  createdAt DateTime @default(now())
+  attempts  DailyChallengeAttempt[]
+  @@map("daily_challenges")
+}
+
+model DailyChallengeAttempt {
+  id          String   @id @default(cuid())
+  userId      String
+  challengeId String
+  score       Int
+  correct     Int
+  total       Int
+  xpEarned    Int      @default(0)
+  coinsEarned Int      @default(0)
+  timeTaken   Int?
+  completedAt DateTime @default(now())
+  challenge DailyChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  @@unique([userId, challengeId])
+  @@map("daily_challenge_attempts")
+}
+
+model WordOfDay {
+  id        String   @id @default(cuid())
+  word      String
+  meaning   String
+  example   String?
+  category  String?
+  date      String   @unique
+  createdAt DateTime @default(now())
+  @@map("word_of_day")
+}
+
+// ============================================
+// 15. CHART CACHE (synced from main app)
+// ============================================
+
+model ChartCache {
+  id          String   @id @default(cuid())
+  symbol      String
+  interval    String
+  tf          String
+  dateKey     String   @default("")
+  candles     Json
+  candleCount Int      @default(0)
+  fetchedAt   DateTime @default(now())
+  @@unique([symbol, interval, tf, dateKey])
+  @@index([symbol, interval, tf])
+  @@map("chart_cache")
 }
