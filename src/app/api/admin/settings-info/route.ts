@@ -48,24 +48,41 @@ export async function GET(req: Request) {
       userStats = { total, active, premium, free };
     } catch {}
 
-    // Worker/Market Data status
+    // Worker/Market Data status — use /stats for real data flow info
     let workerStatus = 'unknown';
     let workerData: any = null;
     
     try {
-      const workerUrl = process.env.NEXT_PUBLIC_UPSTOX_WORKER_URL || 
-                        'https://upstox-realtime.hzero9393.workers.dev';
-      const res = await fetch(`${workerUrl}/health`, {
+      const workerUrl = (process.env.NEXT_PUBLIC_UPSTOX_WORKER_URL || 
+                        'https://upstox-realtime.hzero9393.workers.dev').replace(/\/ws$/, '');
+      const statsRes = await fetch(`${workerUrl}/stats`, {
         method: 'GET',
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(8000),
       });
       
-      if (res.ok) {
-        const data = await res.json();
-        workerStatus = data.ok === true ? 'connected' : 'disconnected';
-        workerData = data;
+      if (statsRes.ok) {
+        const stats = await statsRes.json();
+        workerData = stats;
+        // Real check: hasToken + subscribedCount > 0 = data flowing
+        const dataFlowing = stats.hasToken && (stats.subscribedCount || 0) > 0;
+        workerStatus = dataFlowing ? 'connected' : (stats.upstoxConnecting ? 'connecting' : 'disconnected');
       } else {
-        workerStatus = 'disconnected';
+        // Fallback to /health
+        try {
+          const healthRes = await fetch(`${workerUrl}/health`, {
+            method: 'GET',
+            signal: AbortSignal.timeout(5000),
+          });
+          if (healthRes.ok) {
+            const data = await healthRes.json();
+            workerStatus = data.ok === true ? 'connected' : 'disconnected';
+            workerData = data;
+          } else {
+            workerStatus = 'disconnected';
+          }
+        } catch {
+          workerStatus = 'disconnected';
+        }
       }
     } catch {
       workerStatus = 'disconnected';
