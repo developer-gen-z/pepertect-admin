@@ -76,42 +76,44 @@ export async function GET() {
       console.error('[worker-health] /stats failed:', e?.message || e);
     }
 
-    // ── GROUND TRUTH ──
-    // Data IS flowing if: worker reachable + has token + active subscriptions
-    // subscribedCount > 0 is the definitive proof that data reaches website users
-    const dataIsFlowing = workerReachable && hasToken && subscribedCount > 0;
+    // ── HEALTH DETERMINATION ──
+    //
+    // IMPORTANT: Vercel serverless functions may hit a different Cloudflare edge
+    // than the one serving website users, so subscribedCount/clientCount from
+    // /stats can be 0 even when data IS flowing to users.
+    //
+    // Therefore, the PRIMARY signal is: workerReachable + hasToken.
+    // If the worker is up and has a valid token, the infrastructure works.
+    // subscribedCount > 0 or upstoxReady = true are BONUS confirmations.
+    //
+    // ONLY show "disconnected" when worker is completely unreachable OR has no token.
 
-    // Also consider it flowing if there are subscribedKeys (array length > 0)
-    // as a secondary check in case subscribedCount is stale
-    const hasSubscribedKeys = Array.isArray(statsData?.subscribedKeys) && statsData.subscribedKeys.length > 0;
-    const dataFlowingRelaxed = workerReachable && hasToken && hasSubscribedKeys;
+    const hasSubscriptions = subscribedCount > 0 ||
+      (Array.isArray(statsData?.subscribedKeys) && statsData.subscribedKeys.length > 0);
 
-    // Use the strongest signal available
-    const isActuallyFlowing = dataIsFlowing || dataFlowingRelaxed;
+    // Bonus: data flow confirmed (but NOT required for healthy status)
+    const dataFlowConfirmed = workerReachable && hasToken && hasSubscriptions;
 
-    // Healthy if data is flowing OR worker reports upstoxReady
-    const isHealthy = isActuallyFlowing || (workerReachable && upstoxReady);
+    // PRIMARY health: worker reachable + has token = infrastructure is working
+    const isHealthy = workerReachable && hasToken;
 
-    // ONLY truly disconnected if worker is completely unreachable
-    // OR (no token AND no subscriptions at all)
-    const isTrulyDisconnected = !workerReachable || (!hasToken && !isActuallyFlowing);
+    // Truly disconnected: worker completely down OR no token at all
+    const isTrulyDisconnected = !workerReachable || !hasToken;
 
     // Determine display status
     let status: string;
     if (isHealthy) {
       status = 'connected';
-    } else if (upstoxConnecting || (workerReachable && hasToken && !isActuallyFlowing)) {
-      // Worker up, has token, but reconnecting or waiting for subscriptions
-      status = 'connecting';
     } else if (isTrulyDisconnected) {
       status = 'disconnected';
     } else {
-      status = 'connected';
+      status = 'connecting';
     }
 
     console.log('[worker-health] Final:', {
-      isHealthy, dataIsFlowing, dataFlowingRelaxed,
-      isActuallyFlowing, isTrulyDisconnected, status
+      isHealthy, dataFlowConfirmed, hasSubscriptions,
+      isTrulyDisconnected, status,
+      workerReachable, hasToken, subscribedCount
     });
 
     return NextResponse.json({
@@ -119,7 +121,7 @@ export async function GET() {
       healthy: isHealthy,
       workerReachable,
       upstoxReady,
-      dataIsFlowing: isActuallyFlowing,
+      dataIsFlowing: dataFlowConfirmed,
       upstoxConnecting,
       hasToken,
       clientCount,
