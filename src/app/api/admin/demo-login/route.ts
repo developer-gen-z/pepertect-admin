@@ -16,7 +16,7 @@ async function readDemoLogin() {
     where: { key: 'demo_login_enabled' },
   });
   return {
-    enabled: row?.value === 'true' ?? true, // default enabled
+    enabled: !row || row.value === 'true', // default enabled
     updatedAt: row?.updatedAt?.toISOString() || null,
   };
 }
