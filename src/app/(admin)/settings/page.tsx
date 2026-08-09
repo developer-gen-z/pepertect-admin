@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Settings, Database, Shield, Server, Globe, CheckCircle2, XCircle, Loader2, Wrench, Power, AlertTriangle } from 'lucide-react';
+import { Settings, Database, Shield, Server, Globe, CheckCircle2, XCircle, Loader2, Wrench, Power, AlertTriangle, Play, EyeOff } from 'lucide-react';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { adminFetch } from '@/lib/admin-fetch';
 
@@ -56,6 +56,13 @@ export default function SettingsPage() {
   const [maintMessage, setMaintMessage] = useState('');
   const [maintError, setMaintError] = useState('');
   const [maintSuccess, setMaintSuccess] = useState('');
+
+  // Demo login toggle state
+  const [demoLogin, setDemoLogin] = useState<{ enabled: boolean; updatedAt: string | null } | null>(null);
+  const [demoLoginLoading, setDemoLoginLoading] = useState(true);
+  const [demoLoginSaving, setDemoLoginSaving] = useState(false);
+  const [demoLoginError, setDemoLoginError] = useState('');
+  const [demoLoginSuccess, setDemoLoginSuccess] = useState('');
 
   async function fetchMaintenance() {
     try {
@@ -125,10 +132,47 @@ export default function SettingsPage() {
     return () => clearInterval(interval);
   }, [token]);
 
+  // Fetch demo login status
+  async function fetchDemoLogin() {
+    try {
+      const res: any = await adminFetch('/api/admin/demo-login');
+      if (res.success) setDemoLogin(res.data);
+    } catch (e: any) {
+      if (e?.message !== 'Session expired') setDemoLoginError('Failed to load demo login status');
+    } finally {
+      setDemoLoginLoading(false);
+    }
+  }
+
+  async function toggleDemoLogin(enable: boolean) {
+    setDemoLoginSaving(true);
+    setDemoLoginError('');
+    setDemoLoginSuccess('');
+    try {
+      const res: any = await adminFetch('/api/admin/demo-login', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: enable }),
+      });
+      if (res.success) {
+        setDemoLogin(res.data);
+        setDemoLoginSuccess(res.message);
+        setTimeout(() => setDemoLoginSuccess(''), 4000);
+      } else {
+        setDemoLoginError(res.error || 'Failed to update');
+      }
+    } catch (e: any) {
+      if (e?.message !== 'Session expired') setDemoLoginError(e?.message || 'Network error');
+    } finally {
+      setDemoLoginSaving(false);
+    }
+  }
+
   // Fetch maintenance status
   useEffect(() => {
     if (!token) return;
     fetchMaintenance();
+    fetchDemoLogin();
   }, [token]);
 
   if (loading && !data) {
@@ -272,6 +316,86 @@ export default function SettingsPage() {
         <p className="mt-3 text-[10px] text-text-tertiary leading-relaxed">
           💡 When maintenance mode is ON, all visitors to pepertect.vercel.app will see the maintenance
           message above instead of the app. Toggle back to Production to make the site live again.
+        </p>
+      </div>
+
+      {/* Demo Login Toggle Card — full width */}
+      <div className={`card-soft p-5 border-2 ${demoLogin?.enabled ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red-500/20 bg-red-500/5'}`}>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`icon-tile ${demoLogin?.enabled ? 'bg-emerald-500/15' : 'bg-red-500/10'}`}>
+              {demoLogin?.enabled
+                ? <Play className="h-[18px] w-[18px] text-emerald-500" />
+                : <EyeOff className="h-[18px] w-[18px] text-red-400" />}
+            </div>
+            <div className="min-w-0">
+              <h2 className="font-heading text-base font-semibold text-text-primary">Demo Account Login</h2>
+              <p className="text-[11px] text-text-secondary">
+                Show or hide the demo login button on the website
+              </p>
+            </div>
+          </div>
+          {/* Status badge */}
+          <div className="flex items-center gap-2 shrink-0">
+            {demoLoginLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin text-text-tertiary" />
+            ) : demoLogin?.enabled ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-600 text-xs font-semibold">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                Enabled
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/10 text-red-500 text-xs font-semibold">
+                <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
+                Disabled
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Alert / success messages */}
+        {demoLoginError && (
+          <div className="mt-3 flex items-center gap-2 rounded-lg bg-tint-red/50 border border-loss-red/20 px-3 py-2">
+            <AlertTriangle className="h-4 w-4 text-loss-red shrink-0" />
+            <p className="text-xs text-loss-red font-medium">{demoLoginError}</p>
+          </div>
+        )}
+        {demoLoginSuccess && (
+          <div className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-2">
+            <CheckCircle2 className="h-4 w-4 text-profit-green shrink-0" />
+            <p className="text-xs text-profit-green font-medium">{demoLoginSuccess}</p>
+          </div>
+        )}
+
+        {/* Action buttons */}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {demoLogin?.enabled ? (
+            <button
+              onClick={() => toggleDemoLogin(false)}
+              disabled={demoLoginSaving}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 disabled:opacity-60 text-white text-xs font-semibold transition-colors"
+            >
+              {demoLoginSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <EyeOff className="h-3.5 w-3.5" />}
+              Disable Demo Login
+            </button>
+          ) : (
+            <button
+              onClick={() => toggleDemoLogin(true)}
+              disabled={demoLoginSaving}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-profit-green hover:bg-profit-green/90 disabled:opacity-60 text-white text-xs font-semibold transition-colors"
+            >
+              {demoLoginSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              Enable Demo Login
+            </button>
+          )}
+          <span className="text-[10px] text-text-tertiary">
+            {demoLogin?.updatedAt && `Last changed: ${new Date(demoLogin.updatedAt).toLocaleString()}`}
+          </span>
+        </div>
+
+        <p className="mt-3 text-[10px] text-text-tertiary leading-relaxed">
+          💡 When enabled, visitors see a &quot;Try Demo Account&quot; button on the login page. When disabled,
+          the button is completely hidden. Changes take effect immediately on the live website.
         </p>
       </div>
 
