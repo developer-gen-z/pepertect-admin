@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
-  LayoutDashboard, Users, CreditCard, ShoppingCart, Briefcase,
+  LayoutDashboard, Users,
   LifeBuoy, BarChart3, Settings, Activity, ChevronLeft, ChevronRight,
   Zap, TrendingUp, X, Wifi, Flame, Star,
 } from 'lucide-react';
@@ -13,9 +13,6 @@ import {
 const NAV_ITEMS = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/users', label: 'Users', icon: Users },
-  { href: '/subscriptions', label: 'Subscriptions', icon: CreditCard },
-  { href: '/orders', label: 'Orders', icon: ShoppingCart },
-  { href: '/positions', label: 'Positions', icon: Briefcase },
   { href: '/futures', label: 'Futures', icon: Flame },
   { href: '/tickets', label: 'Support', icon: LifeBuoy },
   { href: '/reviews', label: 'Reviews', icon: Star },
