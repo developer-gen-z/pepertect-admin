@@ -108,18 +108,16 @@ export default function SettingsPage() {
     async function fetchSettings() {
       try {
         setLoading(true);
-        const res = await fetch('/api/admin/settings-info', {
-          headers: { 'Authorization': `Bearer ${token}` },
-        });
-        const result = await res.json();
-        
+        // FIX: use adminFetch (adds auth header + auto-redirects on 401).
+        // Previously a raw fetch left expired sessions showing a generic error.
+        const result = await adminFetch('/api/admin/settings-info');
         if (result.success) {
           setData(result.data);
         } else {
           setError(result.error || 'Failed to load settings');
         }
-      } catch (e) {
-        setError('Network error. Please try again.');
+      } catch (e: any) {
+        if (e?.message !== 'Session expired') setError('Network error. Please try again.');
       } finally {
         setLoading(false);
       }
@@ -446,7 +444,7 @@ export default function SettingsPage() {
           </div>
           <div className="space-y-2">
             <SettingRow label="Auth Method" value={d.security?.authMethod || 'JWT (HS256)'} />
-            <SettingRow label="Token Expiry" value={d.security?.tokenExpiry || '24 hours'} />
+            <SettingRow label="Token Expiry" value={d.security?.tokenExpiry || 'Not configured'} />
             <SettingRow label="Admin Auth" value={d.security?.adminAuth || 'Environment Credentials'} />
             <SettingRow 
               label="JWT Secret" 

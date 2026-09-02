@@ -1,4 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { UPSTOX_WORKER_URL } from '@/lib/worker-config';
+import { verifyToken, extractBearerToken } from '@/lib/auth';
 
 /**
  * Proxy endpoint to check Cloudflare Worker health AND WebSocket status.
@@ -11,16 +13,21 @@ import { NextResponse } from 'next/server';
  *
  * ONLY show "disconnected" when the worker is genuinely unreachable
  * OR has no token AND no active subscriptions whatsoever.
+ *
+ * Security fix: requires admin auth (was previously public — anyone could
+ * probe the infrastructure through this endpoint). The worker URL now also
+ * comes from the central worker-config module instead of being hardcoded.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const workerUrl = process.env.NEXT_PUBLIC_UPSTOX_WORKER_URL ||
-                      process.env.UPSTOX_WORKER_URL ||
-                      'https://upstox-realtime.hzero9393.workers.dev';
+    // ── Auth check ──
+    const token = extractBearerToken(req.headers.get('authorization'));
+    const payload = token ? await verifyToken(token) : null;
+    if (!payload || payload.role !== 'ADMIN') {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
 
-    const baseUrl = workerUrl.replace(/\/ws$/, '');
-
-    console.log('[worker-health] Checking worker status...', { baseUrl });
+    const baseUrl = UPSTOX_WORKER_URL;
 
     // ── Step 1: Check if Worker is reachable via /health ──
     let workerReachable = false;
@@ -34,8 +41,8 @@ export async function GET() {
         const healthData = await healthRes.json();
         workerReachable = healthData.ok === true;
       }
-    } catch (e: any) {
-      console.log('[worker-health] /health unreachable:', e?.message || e);
+    } catch {
+      // unreachable — fall through to /stats
     }
 
     // ── Step 2: Get stats from /stats (ground truth) ──
@@ -64,16 +71,10 @@ export async function GET() {
         // If /stats responded, the worker IS reachable even if /health failed
         if (!workerReachable) {
           workerReachable = true;
-          console.log('[worker-health] Worker reachable via /stats (fallback)');
         }
-
-        console.log('[worker-health] Stats:', {
-          upstoxReady, hasToken, clientCount, subscribedCount,
-          subscribedKeys: Array.isArray(statsData.subscribedKeys) ? statsData.subscribedKeys.length : 0
-        });
       }
-    } catch (e: any) {
-      console.error('[worker-health] /stats failed:', e?.message || e);
+    } catch {
+      // both endpoints failed
     }
 
     // ── HEALTH DETERMINATION ──
@@ -109,12 +110,6 @@ export async function GET() {
     } else {
       status = 'connecting';
     }
-
-    console.log('[worker-health] Final:', {
-      isHealthy, dataFlowConfirmed, hasSubscriptions,
-      isTrulyDisconnected, status,
-      workerReachable, hasToken, subscribedCount
-    });
 
     return NextResponse.json({
       success: true,

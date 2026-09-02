@@ -6,16 +6,7 @@
  * show LIVE prices & P&L instead of stale DB values.
  */
 
-// ─── Worker URL ────────────────────────────────────────────────────────────
-function getWorkerUrl(): string {
-  const raw =
-    process.env.NEXT_PUBLIC_UPSTOX_WORKER_URL ||
-    'https://upstox-realtime.hzero9393.workers.dev';
-  let url = raw.replace(/\/ws$/, '');
-  if (url.startsWith('wss://')) url = 'https://' + url.slice(6);
-  if (url.startsWith('ws://')) url = 'http://' + url.slice(5);
-  return url.replace(/\/+$/, '');
-}
+import { UPSTOX_WORKER_URL } from '@/lib/worker-config';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 export interface LivePrice {
@@ -70,7 +61,7 @@ export async function batchFetchLtp(
   // Worker accepts comma-separated instrument_key values.
   // URL-encode each key (they contain '|' which must be %7C).
   const encoded = unique.map((k) => encodeURIComponent(k)).join(',');
-  const url = `${getWorkerUrl()}/ltp?instrument_key=${encoded}`;
+  const url = `${UPSTOX_WORKER_URL}/ltp?instrument_key=${encoded}`;
 
   try {
     const res = await fetch(url, {
@@ -117,7 +108,7 @@ export async function batchFetchQuotes(
   if (!unique.length) return result;
 
   const encoded = unique.map((k) => encodeURIComponent(k)).join(',');
-  const url = `${getWorkerUrl()}/quotes?instrument_key=${encoded}`;
+  const url = `${UPSTOX_WORKER_URL}/quotes?instrument_key=${encoded}`;
 
   try {
     const res = await fetch(url, {

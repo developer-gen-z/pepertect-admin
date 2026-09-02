@@ -1,10 +1,11 @@
 'use client';
 
+import Link from 'next/link';
 import { useTheme } from 'next-themes';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { useRouter } from 'next/navigation';
 import { Sun, Moon, Menu, LogOut, Bell } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { useMounted } from '@/hooks/use-mounted';
 
 interface AdminHeaderProps {
   onMenuToggle: () => void;
@@ -14,6 +15,10 @@ export function AdminHeader({ onMenuToggle }: AdminHeaderProps) {
   const { theme, setTheme } = useTheme();
   const { admin, logout } = useAuthStore();
   const router = useRouter();
+
+  // Mounted check — `theme` is undefined during SSR/first paint, which caused
+  // the wrong icon to flash for dark-theme users before correcting.
+  const mounted = useMounted();
 
   const handleLogout = () => {
     logout();
@@ -26,6 +31,7 @@ export function AdminHeader({ onMenuToggle }: AdminHeaderProps) {
       <div className="flex items-center gap-3">
         <button
           onClick={onMenuToggle}
+          aria-label="Open navigation menu"
           className="flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary hover:bg-bg-surface-alt hover:text-text-primary transition-colors lg:hidden"
         >
           <Menu className="h-5 w-5" />
@@ -42,14 +48,21 @@ export function AdminHeader({ onMenuToggle }: AdminHeaderProps) {
       <div className="flex items-center gap-2">
         <button
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
           className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-bg-surface-alt transition-colors"
         >
-          {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          {/* Render a neutral placeholder until mounted to avoid icon flash */}
+          {mounted ? (theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />) : <Moon className="h-4 w-4 invisible" />}
         </button>
-        <button className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-bg-surface-alt transition-colors relative">
+        {/* Bell links to activity logs; the fake always-on red dot is removed */}
+        <Link
+          href="/activity"
+          aria-label="View recent activity and notifications"
+          title="Recent activity"
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-bg-surface-alt transition-colors relative"
+        >
           <Bell className="h-4 w-4" />
-          <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-loss-red" />
-        </button>
+        </Link>
         <div className="h-6 w-px bg-border mx-1" />
         <button
           onClick={handleLogout}

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { adminFetch } from '@/lib/admin-fetch';
 import { cn } from '@/lib/utils';
-import { BarChart3, Users, UserCheck, UserPlus, Loader2, TrendingUp, Star, MessageSquare, LifeBuoy } from 'lucide-react';
+import { Users, UserCheck, UserPlus, TrendingUp, Star, MessageSquare, LifeBuoy } from 'lucide-react';
 
 interface StatsData {
   totalUsers: number;

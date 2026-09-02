@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
-import { 
+import {
   Wifi, WifiOff, RefreshCw, ExternalLink, Power,
   Loader2, CheckCircle2, AlertCircle, ArrowRight,
   Globe, Activity, Users, Key, Server, Signal, AlertTriangle
@@ -39,6 +39,8 @@ interface ReconnectResponse {
 
 type ConnectionStatus = 'connected' | 'disconnected' | 'connecting' | 'error' | 'unknown';
 
+const MAX_AUTO_RECONNECT_ATTEMPTS = 5;
+
 export default function WebSocketStatusPage() {
   const { token } = useAuthStore();
   const [healthData, setHealthData] = useState<WorkerHealthResponse | null>(null);
@@ -49,8 +51,19 @@ export default function WebSocketStatusPage() {
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const [autoReconnectEnabled, setAutoReconnectEnabled] = useState(true);
   const [autoReconnectCount, setAutoReconnectCount] = useState(0);
+
+  // Refs — FIX: the old implementation captured stale closures of these
+  // values inside setTimeout chains, so the retry loop never saw the
+  // incremented attempt counter and could loop forever. It also tore down
+  // (and cleared) the pending retry timer whenever any dependency changed.
+  const autoReconnectEnabledRef = useRef(autoReconnectEnabled);
+  const autoReconnectCountRef = useRef(0);
+  const reconnectingRef = useRef(false);
   const autoReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const prevStatusRef = useRef<string>('unknown');
+
+  useEffect(() => {
+    autoReconnectEnabledRef.current = autoReconnectEnabled;
+  }, [autoReconnectEnabled]);
 
   // Trust the API's computed status — it uses subscribedCount as ground truth
   const connectionStatus: ConnectionStatus = (() => {
@@ -67,16 +80,24 @@ export default function WebSocketStatusPage() {
 
   const checkWorkerHealth = useCallback(async (): Promise<WorkerHealthResponse | null> => {
     try {
-      const res = await fetch('/api/admin/worker-health', { method: 'GET', cache: 'no-store' });
+      const res = await fetch('/api/admin/worker-health', {
+        method: 'GET',
+        cache: 'no-store',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (res.status === 401) return null;
       const data: WorkerHealthResponse = await res.json();
       return data;
-    } catch (e) {
+    } catch {
       return null;
     }
-  }, []);
+  }, [token]);
 
   const attemptAutoReconnect = useCallback(async () => {
-    if (!token || reconnecting || !autoReconnectEnabled) return false;
+    if (!token || reconnectingRef.current || !autoReconnectEnabledRef.current) return;
+    if (autoReconnectCountRef.current >= MAX_AUTO_RECONNECT_ATTEMPTS) return;
+
+    reconnectingRef.current = true;
     setReconnecting(true);
     try {
       const res = await fetch('/api/admin/worker-reconnect', {
@@ -85,27 +106,94 @@ export default function WebSocketStatusPage() {
       });
       const data: ReconnectResponse = await res.json();
       setReconnectResult(data);
-      setAutoReconnectCount(prev => prev + 1);
-      setTimeout(async () => {
-        const newHealth = await checkWorkerHealth();
-        if (newHealth) {
-          setHealthData(newHealth);
-          setLastChecked(new Date());
-          if (!newHealth.healthy && autoReconnectEnabled && autoReconnectCount < 5) {
-            autoReconnectTimerRef.current = setTimeout(attemptAutoReconnect, 10000);
-          }
-        }
-        setReconnecting(false);
-      }, 3000);
-      return data.success;
-    } catch (e) {
+
+      autoReconnectCountRef.current += 1;
+      setAutoReconnectCount(autoReconnectCountRef.current);
+
+      // Wait, then re-check health
+      await new Promise((r) => setTimeout(r, 3000));
+      const newHealth = await checkWorkerHealth();
+      if (newHealth) {
+        setHealthData(newHealth);
+        setLastChecked(new Date());
+      }
+
+      // Schedule the next attempt only if still unhealthy, still enabled,
+      // and the attempt budget isn't exhausted (reads the REF, not stale state)
+      const stillUnhealthy = !newHealth?.healthy;
+      if (
+        stillUnhealthy &&
+        autoReconnectEnabledRef.current &&
+        autoReconnectCountRef.current < MAX_AUTO_RECONNECT_ATTEMPTS
+      ) {
+        autoReconnectTimerRef.current = setTimeout(() => {
+          autoReconnectTimerRef.current = null;
+          void attemptAutoReconnect();
+        }, 10000);
+      }
+    } catch {
+      // ignore — next poll will re-evaluate
+    } finally {
+      reconnectingRef.current = false;
       setReconnecting(false);
-      return false;
     }
-  }, [token, reconnecting, autoReconnectEnabled, autoReconnectCount, checkWorkerHealth]);
+  }, [token, checkWorkerHealth]);
+
+  // ── Polling effect (stable — no per-keystroke teardown) ──
+  useEffect(() => {
+    if (!token) return;
+    let mounted = true;
+
+    const checkStatus = async () => {
+      const data = await checkWorkerHealth();
+      if (!mounted || !data) return;
+      setHealthData(data);
+      setLoading(false);
+      setLastChecked(new Date());
+
+      const current = data.status || 'unknown';
+      // FIX: auto-reconnect when ALREADY disconnected on load, not only on a
+      // connected → disconnected transition (the old logic never fired if
+      // you opened the page while the feed was already down).
+      const needsReconnect = current === 'disconnected' || current === 'error';
+
+      if (
+        needsReconnect &&
+        autoReconnectEnabledRef.current &&
+        !reconnectingRef.current &&
+        autoReconnectCountRef.current < MAX_AUTO_RECONNECT_ATTEMPTS &&
+        !autoReconnectTimerRef.current
+      ) {
+        autoReconnectTimerRef.current = setTimeout(() => {
+          autoReconnectTimerRef.current = null;
+          void attemptAutoReconnect();
+        }, 3000);
+      }
+    };
+
+    checkStatus();
+    const interval = setInterval(checkStatus, 10000);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [token, checkWorkerHealth, attemptAutoReconnect]);
+
+  // Cleanup the pending retry timer ONLY on unmount (previously the polling
+  // effect's cleanup cleared it on every dependency change)
+  useEffect(() => {
+    return () => {
+      if (autoReconnectTimerRef.current) {
+        clearTimeout(autoReconnectTimerRef.current);
+        autoReconnectTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const handleReconnect = async () => {
-    if (!token || reconnecting) return;
+    if (!token || reconnectingRef.current) return;
+    reconnectingRef.current = true;
     setReconnecting(true);
     setReconnectResult(null);
     try {
@@ -115,38 +203,18 @@ export default function WebSocketStatusPage() {
       });
       const data: ReconnectResponse = await res.json();
       setReconnectResult(data);
-      setTimeout(async () => {
-        const newHealth = await checkWorkerHealth();
-        if (newHealth) { setHealthData(newHealth); setLastChecked(new Date()); }
-      }, 3000);
-    } catch (e) {
-      setReconnectResult({ success: false, message: 'Network error. Please try again.', error: e instanceof Error ? e.message : 'Unknown error' });
+      // Wait for the worker to settle before re-checking (previously the
+      // spinner ended before this re-check completed)
+      await new Promise((r) => setTimeout(r, 3000));
+      const newHealth = await checkWorkerHealth();
+      if (newHealth) { setHealthData(newHealth); setLastChecked(new Date()); }
+    } catch {
+      setReconnectResult({ success: false, message: 'Network error. Please try again.' });
     } finally {
+      reconnectingRef.current = false;
       setReconnecting(false);
     }
   };
-
-  useEffect(() => {
-    if (!token) return;
-    let mounted = true;
-    const checkStatus = async () => {
-      const data = await checkWorkerHealth();
-      if (!mounted) return;
-      if (data) {
-        setHealthData(data);
-        setLoading(false);
-        setLastChecked(new Date());
-        const currentStatus = data.status || 'unknown';
-        if (autoReconnectEnabled && prevStatusRef.current === 'connected' && currentStatus === 'disconnected' && !reconnecting) {
-          autoReconnectTimerRef.current = setTimeout(attemptAutoReconnect, 3000);
-        }
-        prevStatusRef.current = currentStatus;
-      }
-    };
-    checkStatus();
-    const interval = setInterval(checkStatus, 10000);
-    return () => { mounted = false; clearInterval(interval); if (autoReconnectTimerRef.current) clearTimeout(autoReconnectTimerRef.current); };
-  }, [token, autoReconnectEnabled, reconnecting, checkWorkerHealth, attemptAutoReconnect]);
 
   const handleRefresh = async () => {
     setChecking(true);
@@ -187,7 +255,7 @@ export default function WebSocketStatusPage() {
 
       {/* ALERT BANNER — Only when truly disconnected */}
       {connectionStatus === 'disconnected' && (
-        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 flex items-center gap-3">
+        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 flex items-center gap-3" role="alert">
           <AlertTriangle className="h-5 w-5 text-red-500 shrink-0" />
           <div className="flex-1">
             <p className="font-medium text-red-700 dark:text-red-300">WebSocket Disconnected - Website users cannot see live data!</p>
@@ -289,7 +357,7 @@ export default function WebSocketStatusPage() {
               </div>
               {autoReconnectCount > 0 && (
                 <div className="text-text-secondary">
-                  Auto-Reconnect Attempts: <span className="font-medium">{autoReconnectCount}</span>
+                  Auto-Reconnect Attempts: <span className="font-medium">{autoReconnectCount}/{MAX_AUTO_RECONNECT_ATTEMPTS}</span>
                 </div>
               )}
             </div>
@@ -307,13 +375,13 @@ export default function WebSocketStatusPage() {
             )}
 
             {(connectionStatus === 'disconnected' || connectionStatus === 'error') && (
-              <button onClick={handleReconnect} disabled={reconnecting}
+              <button onClick={handleReconnect} disabled={reconnecting} aria-label="Reconnect WebSocket now"
                 className="inline-flex items-center gap-2 px-6 py-3 bg-red-500 hover:bg-red-600 disabled:bg-red-400 text-white font-semibold rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98] disabled:cursor-not-allowed shadow-lg shadow-red-500/25">
                 {reconnecting ? <><Loader2 className="h-5 w-5 animate-spin" /> Reconnecting...</> : <><Power className="h-5 w-5" /> Reconnect Now</>}
               </button>
             )}
 
-            <button onClick={handleRefresh} disabled={checking || loading}
+            <button onClick={handleRefresh} disabled={checking || loading} aria-label="Refresh status"
               className="inline-flex items-center gap-2 px-5 py-3 bg-bg-surface hover:bg-bg-surface-alt border border-border text-text-secondary font-medium rounded-xl transition-colors disabled:opacity-50">
               <RefreshCw className={`h-4 w-4 ${checking ? 'animate-spin' : ''}`} />
               Refresh Status
@@ -321,6 +389,7 @@ export default function WebSocketStatusPage() {
 
             <label className="inline-flex items-center gap-2 px-4 py-2.5 bg-bg-surface border border-border rounded-xl cursor-pointer">
               <input type="checkbox" checked={autoReconnectEnabled} onChange={(e) => setAutoReconnectEnabled(e.target.checked)}
+                aria-label="Enable auto-reconnect"
                 className="w-4 h-4 rounded border-border text-brand-primary focus:ring-brand-primary" />
               <span className="text-sm font-medium text-text-secondary">Auto-Reconnect</span>
             </label>
@@ -338,10 +407,10 @@ export default function WebSocketStatusPage() {
                     <p>Final Health: {reconnectResult.data.finalHealth ? 'Healthy' : 'Pending'}</p>
                   </div>
                 )}
-                {/* Only show Authorize link when token is truly missing */}
+                {/* Only show Authorize link when token is truly missing and the server returned a valid URL */}
                 {!reconnectResult.data?.hasAccessToken && reconnectResult.authUrl && (
                   <a href={reconnectResult.authUrl} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 mt-2 text-blue-600 hover:text-blue-700 font-medium text-sm">
+                    className="inline-flex items-center gap-1 mt-2 text-brand-primary hover:underline font-medium text-sm">
                     <ExternalLink className="h-3 w-3" />
                     Authorize with Upstox
                   </a>
@@ -400,8 +469,6 @@ export default function WebSocketStatusPage() {
           <a href="/settings" className="text-sm text-brand-primary hover:underline">Settings</a>
           <span className="text-text-tertiary">|</span>
           <a href={websiteUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-brand-primary hover:underline">Open Website</a>
-          <span className="text-text-tertiary">|</span>
-          <a href="https://upstox-realtime.hzero9393.workers.dev/stats" target="_blank" rel="noopener noreferrer" className="text-sm text-brand-primary hover:underline">Worker Stats</a>
         </div>
       </div>
     </div>

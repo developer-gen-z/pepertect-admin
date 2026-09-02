@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { verifyToken, extractBearerToken } from '@/lib/auth';
+import { UPSTOX_WORKER_URL } from '@/lib/worker-config';
 import { db } from '@/lib/db';
 
 /**
@@ -10,7 +11,7 @@ export async function GET(req: Request) {
   try {
     const token = extractBearerToken(req.headers.get('authorization'));
     const payload = token ? await verifyToken(token) : null;
-    
+
     if (!payload || payload.role !== 'ADMIN') {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
@@ -53,8 +54,7 @@ export async function GET(req: Request) {
     let workerData: any = null;
     
     try {
-      const workerUrl = (process.env.NEXT_PUBLIC_UPSTOX_WORKER_URL || 
-                        'https://upstox-realtime.hzero9393.workers.dev').replace(/\/ws$/, '');
+      const workerUrl = UPSTOX_WORKER_URL;
       const statsRes = await fetch(`${workerUrl}/stats`, {
         method: 'GET',
         signal: AbortSignal.timeout(8000),
@@ -96,15 +96,22 @@ export async function GET(req: Request) {
       const accessToken = process.env.UPSTOX_ACCESS_TOKEN;
       if (accessToken) {
         // Decode JWT to get expiry
+        // FIX: Upstox tokens use base64url encoding ('-'/'_' chars, no padding)
+        // which atob() cannot decode — normalize to standard base64 first.
         const parts = accessToken.split('.');
         if (parts.length === 3) {
-          const payload = JSON.parse(atob(parts[1]));
-          if (payload.exp) {
-            tokenExpiry = new Date(payload.exp * 1000).toISOString();
-            upstoxTokenStatus = new Date(payload.exp * 1000) > new Date() ? 'valid' : 'expired';
+          try {
+            const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+            const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+            const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf-8'));
+            if (payload.exp) {
+              tokenExpiry = new Date(payload.exp * 1000).toISOString();
+              upstoxTokenStatus = new Date(payload.exp * 1000) > new Date() ? 'valid' : 'expired';
+            }
+          } catch {
+            // Undecodable payload — don't assume valid, stay unknown
           }
         }
-        upstoxTokenStatus = upstoxTokenStatus === 'unknown' ? 'valid' : upstoxTokenStatus;
       } else {
         upstoxTokenStatus = 'not_configured';
       }
@@ -125,7 +132,9 @@ export async function GET(req: Request) {
     // Security info
     const securityInfo = {
       authMethod: 'JWT (HS256)',
-      tokenExpiry: process.env.JWT_EXPIRES_IN || '24 hours',
+      // FIX: report the ACTUAL expiry (single source of truth with lib/auth.ts).
+      // Previously hard-reported "24 hours" while tokens actually lasted 365 days.
+      tokenExpiry: process.env.JWT_EXPIRES_IN || '7d',
       adminAuth: 'Environment Credentials',
       jwtSecretConfigured: !!process.env.JWT_SECRET,
     };

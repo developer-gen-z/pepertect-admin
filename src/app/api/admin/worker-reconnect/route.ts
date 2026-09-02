@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { verifyToken, extractBearerToken } from '@/lib/auth';
+import { UPSTOX_WORKER_URL, buildUpstoxAuthorizeUrl } from '@/lib/worker-config';
 
 /**
  * POST /api/admin/worker-reconnect
@@ -7,6 +8,11 @@ import { verifyToken, extractBearerToken } from '@/lib/auth';
  * Checks REAL Upstox WebSocket connection status via /stats endpoint.
  * If upstoxReady is false, pushes the env UPSTOX_ACCESS_TOKEN to the
  * worker and triggers reconnection.
+ *
+ * Fixes: worker URL + OAuth authorize URL now come from the central
+ * worker-config module (previously hardcoded in multiple places, and the
+ * authorize URL was built even when client_id/redirect_uri were empty,
+ * producing a broken link).
  */
 export async function POST(req: Request) {
   try {
@@ -17,8 +23,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    const workerUrl = (process.env.NEXT_PUBLIC_UPSTOX_WORKER_URL ||
-                      'https://upstox-realtime.hzero9393.workers.dev').replace(/\/ws$/, '');
+    const workerUrl = UPSTOX_WORKER_URL;
     const accessToken = process.env.UPSTOX_ACCESS_TOKEN;
 
     // ─── Step 1: Check REAL status via /stats ───────────────────────────
@@ -54,11 +59,12 @@ export async function POST(req: Request) {
 
     // ─── Step 2: Push token to worker ───────────────────────────────────
     if (!accessToken) {
+      const authUrl = buildUpstoxAuthorizeUrl(); // '' when OAuth env is not configured
       return NextResponse.json({
         success: false,
         error: 'No Upstox access token configured. Please re-authorize with Upstox.',
         action: 'required_oauth',
-        authUrl: `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${process.env.UPSTOX_API_KEY || ''}&redirect_uri=${process.env.UPSTOX_REDIRECT_URI || ''}`,
+        ...(authUrl ? { authUrl } : {}),
       }, { status: 400 });
     }
 
@@ -112,9 +118,8 @@ export async function POST(req: Request) {
         hasAccessToken: !!accessToken,
       },
       error: !finalUpstoxReady && !pushResult ? pushError : undefined,
-      authUrl: !finalUpstoxReady
-        ? `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${process.env.UPSTOX_API_KEY || ''}&redirect_uri=${process.env.UPSTOX_REDIRECT_URI || ''}`
-        : undefined,
+      // Only include a valid authorize URL (never an empty/broken link)
+      authUrl: !finalUpstoxReady ? (buildUpstoxAuthorizeUrl() || undefined) : undefined,
     });
   } catch (error: any) {
     console.error('[worker-reconnect] Error:', error?.message || error);
@@ -137,8 +142,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    const workerUrl = (process.env.NEXT_PUBLIC_UPSTOX_WORKER_URL ||
-                      'https://upstox-realtime.hzero9393.workers.dev').replace(/\/ws$/, '');
+    const workerUrl = UPSTOX_WORKER_URL;
 
     let upstoxReady = false;
     let workerReachable = false;
@@ -168,7 +172,7 @@ export async function GET(req: Request) {
         hasToken,
         canReconnect: hasAccessToken,
         hasAccessToken,
-        authUrl: `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${process.env.UPSTOX_API_KEY || ''}&redirect_uri=${process.env.UPSTOX_REDIRECT_URI || ''}`,
+        authUrl: buildUpstoxAuthorizeUrl() || undefined,
       },
     });
   } catch (error: any) {

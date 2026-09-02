@@ -13,17 +13,17 @@ export async function GET(req: Request) {
 
     // Test database connectivity
     const dbTest = await testDatabaseConnection();
-    
+
     return NextResponse.json({
       success: true,
       data: {
         timestamp: new Date().toISOString(),
         environment: {
           nodeEnv: process.env.NODE_ENV,
+          // Booleans only — never return URL/ID fragments (they leak credentials)
           hasDbUrl: !!process.env.DATABASE_URL,
-          dbUrlPrefix: process.env.DATABASE_URL?.substring(0, 30) + '...',
           hasAdminUserId: !!process.env.UPSTOX_ADMIN_USER_ID,
-          adminUserId: process.env.UPSTOX_ADMIN_USER_ID?.substring(0, 20) + '...',
+          hasJwtSecret: !!process.env.JWT_SECRET,
         },
         database: dbTest,
       },

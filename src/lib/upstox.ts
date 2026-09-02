@@ -5,25 +5,15 @@
  * - Shows correct status even when admin DB is not configured
  */
 
+import { UPSTOX_WORKER_URL, buildUpstoxAuthorizeUrl } from '@/lib/worker-config';
+
 // ---------------------------------------------------------------------------
-// Config (no DB import needed for basic checks)
+// Config
 // ---------------------------------------------------------------------------
-export const UPSTOX_API_KEY = process.env.UPSTOX_API_KEY || '';
-export const UPSTOX_API_SECRET = process.env.UPSTOX_API_SECRET || '';
-export const UPSTOX_REDIRECT_URI = process.env.UPSTOX_REDIRECT_URI || '';
 export const UPSTOX_ADMIN_USER_ID = process.env.UPSTOX_ADMIN_USER_ID || null;
 
-// Cloudflare Worker URL
-function resolveWorkerUrl(): string {
-  const raw =
-    process.env.NEXT_PUBLIC_UPSTOX_WORKER_URL ||
-    'https://upstox-realtime.hzero9393.workers.dev';
-  let url = raw.replace(/\/ws$/, '');
-  if (url.startsWith('wss://')) url = 'https://' + url.slice(6);
-  if (url.startsWith('ws://')) url = 'http://' + url.slice(5);
-  return url;
-}
-export const UPSTOX_WORKER_URL = resolveWorkerUrl();
+// Re-export for convenience (single source of truth in worker-config)
+export { UPSTOX_WORKER_URL, buildUpstoxAuthorizeUrl };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -36,7 +26,7 @@ export interface TokenStatus {
   userEmail: string | null;
   isAdminMode: boolean;
   workerConnected: boolean;
-  dbConnected: boolean; // NEW: Track DB status separately
+  dbConnected: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -47,16 +37,16 @@ async function checkWorkerHealth(): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000); // 5s timeout
-    
+
     const res = await fetch(`${UPSTOX_WORKER_URL}/health`, {
       method: 'GET',
       signal: controller.signal,
     });
-    
+
     clearTimeout(timeout);
-    
+
     if (!res.ok) return false;
-    
+
     const data = await res.json();
     // Worker returns various formats:
     // - { ok: true } - basic health
@@ -64,30 +54,30 @@ async function checkWorkerHealth(): Promise<boolean> {
     // - { status: "connected" } - string status
     // Accept ALL of these as "worker is running"
     return data.ok === true ||
-           data.connected === true || 
-           data.status === 'connected' || 
+           data.connected === true ||
+           data.status === 'connected' ||
            data.status === 'ok' ||
            data.websocket === 'active' ||
            data.ws_connected === true ||
            !!data.feeds?.length; // If feeds are present, WS is working
-  } catch (e) {
+  } catch {
     // If /health fails, try alternative endpoints
     try {
-      const res = await fetch(`${UPSTOX_WORKER_URL}/status`, { 
+      const res = await fetch(`${UPSTOX_WORKER_URL}/status`, {
         method: 'GET',
-        signal: AbortSignal.timeout(3000) 
+        signal: AbortSignal.timeout(3000)
       });
       if (res.ok) {
         const data = await res.json();
         return data.connected === true || data.status === 'connected';
       }
     } catch {}
-    
+
     // Last resort: try to hit the main endpoint
     try {
-      const res = await fetch(`${UPSTOX_WORKER_URL}/`, { 
+      const res = await fetch(`${UPSTOX_WORKER_URL}/`, {
         method: 'GET',
-        signal: AbortSignal.timeout(2000) 
+        signal: AbortSignal.timeout(2000)
       });
       if (res.ok) {
         const data = await res.json();
@@ -95,7 +85,7 @@ async function checkWorkerHealth(): Promise<boolean> {
         return data.ok === true || data.connected === true || data.status === 'ok';
       }
     } catch {}
-    
+
     return false;
   }
 }
@@ -119,28 +109,52 @@ export async function getTokenStatus(): Promise<TokenStatus> {
   const workerConnected = await checkWorkerHealth();
 
   // If worker is connected → LIVE DATA IS WORKING!
-  // Show as connected regardless of DB state
+  // FIX: previously this branch fabricated expiresAt (now + 24h) and a fake
+  // userEmail. We now report what we actually know: the worker has a token
+  // and is streaming — but expiry/email are unknown unless the DB has them.
   if (workerConnected) {
-    console.log('[upstox-admin] ✅ Cloudflare Worker is CONNECTED - Live data is flowing!');
+    // Try DB for real token details (optional)
+    let expiresAt: string | null = null;
+    let userEmail: string | null = null;
+    let isExpired = false;
+    let dbConnected = false;
+
+    if (UPSTOX_ADMIN_USER_ID) {
+      try {
+        const { db } = await import('@/lib/db');
+        const tokenRecord = await db.upstoxToken.findUnique({
+          where: { userId: UPSTOX_ADMIN_USER_ID },
+        });
+        if (tokenRecord) {
+          dbConnected = true;
+          expiresAt = tokenRecord.expiresAt.toISOString();
+          userEmail = tokenRecord.userEmail;
+          isExpired = new Date(tokenRecord.expiresAt) < new Date(Date.now() + 5 * 60 * 1000);
+        }
+      } catch {
+        // DB not configured — details stay unknown, which is honest
+      }
+    }
+
     return {
       hasToken: true,
-      isActive: true, // Worker connected = live data available
-      expiresAt: new Date(Date.now() + 86400000).toISOString(), // ~24h from now
-      isExpired: false,
-      userEmail: 'admin@pepertect.com',
+      isActive: true, // worker connected = live data available
+      expiresAt,
+      isExpired,
+      userEmail,
       isAdminMode: true,
       workerConnected: true,
-      dbConnected: false, // DB might not work, but who cares? Data is live!
+      dbConnected,
     };
   }
 
   // Worker NOT connected - try DB check (might fail if DB not configured)
   if (!UPSTOX_ADMIN_USER_ID) {
-    return { 
-      ...defaultStatus, 
-      isAdminMode: false, 
+    return {
+      ...defaultStatus,
+      isAdminMode: false,
       workerConnected,
-      dbConnected: false 
+      dbConnected: false
     };
   }
 
@@ -148,7 +162,7 @@ export async function getTokenStatus(): Promise<TokenStatus> {
   try {
     // Dynamic import to avoid crashing if Prisma not configured
     const { db } = await import('@/lib/db');
-    
+
     const tokenRecord = await db.upstoxToken.findUnique({
       where: { userId: UPSTOX_ADMIN_USER_ID },
     });
@@ -176,26 +190,11 @@ export async function getTokenStatus(): Promise<TokenStatus> {
   }
 
   // Nothing is connected
-  return { 
-    ...defaultStatus, 
-    workerConnected, 
-    dbConnected: false 
+  return {
+    ...defaultStatus,
+    workerConnected,
+    dbConnected: false
   };
-}
-
-// ---------------------------------------------------------------------------
-// Build authorize URL for reconnection
-// ---------------------------------------------------------------------------
-export function buildAuthorizeUrl(state?: string): string {
-  if (!UPSTOX_API_KEY) return '';
-  
-  const params = new URLSearchParams({
-    response_type: 'code',
-    client_id: UPSTOX_API_KEY,
-    redirect_uri: UPSTOX_REDIRECT_URI,
-  });
-  if (state) params.set('state', state);
-  return `https://api.upstox.com/v2/login/authorization/dialog?${params.toString()}`;
 }
 
 // ---------------------------------------------------------------------------

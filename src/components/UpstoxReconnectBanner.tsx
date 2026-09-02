@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
-import { 
-  ExternalLink, 
-  RefreshCw, 
-  X, 
-  Wifi, 
-  WifiOff, 
+import {
+  ExternalLink,
+  RefreshCw,
+  X,
+  Wifi,
+  WifiOff,
   Power,
   Loader2,
   CheckCircle2,
@@ -57,19 +57,21 @@ export default function UpstoxReconnectBanner() {
       const res = await fetch('/api/admin/worker-health', {
         method: 'GET',
         cache: 'no-store',
+        // Auth header — this endpoint now requires a valid admin token
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
+      if (res.status === 401) return false;
       if (!res.ok) return false;
       const data: WorkerHealthResponse = await res.json();
-      
+
       // Track real data flow
       if (data.dataIsFlowing !== undefined) {
         setDataIsFlowing(data.dataIsFlowing);
       }
-      
+
       // Use the API's computed healthy/status — don't override locally
-      // The API already uses ground truth (subscribedCount, hasToken)
       return data.healthy === true;
-    } catch (e) {
+    } catch {
       // Network error — don't assume disconnected, could be transient
       return false;
     }
@@ -104,11 +106,10 @@ export default function UpstoxReconnectBanner() {
           }
         }, 3000);
       }
-    } catch (e) {
+    } catch {
       setReconnectResult({
         success: false,
         message: 'Network error. Please try again.',
-        error: e instanceof Error ? e.message : 'Unknown error',
       });
       setShowResult(true);
     } finally {
@@ -118,7 +119,7 @@ export default function UpstoxReconnectBanner() {
 
   useEffect(() => {
     if (!token) return;
-    
+
     const checkStatus = async () => {
       const isHealthy = await checkWorkerHealth();
       setWorkerHealthy(isHealthy);
@@ -128,6 +129,7 @@ export default function UpstoxReconnectBanner() {
     checkStatus();
     const interval = setInterval(checkStatus, 30000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const handleRefresh = async () => {
@@ -141,21 +143,20 @@ export default function UpstoxReconnectBanner() {
   // Don't render while loading or if dismissed
   if (loading || dismissed) return null;
 
-  // If data is confirmed flowing, NEVER show red — even if healthy is somehow false
-  if (dataIsFlowing && workerHealthy === false) {
-    // API says not healthy but data IS flowing — trust the data
-    setWorkerHealthy(true);
-  }
+  // FIX: compute effective health WITHOUT calling setState during render
+  // (the old side-effect-in-render caused an extra render pass every cycle).
+  // If data is confirmed flowing, treat as healthy even if the flag lags.
+  const effectiveHealthy = workerHealthy === true || dataIsFlowing;
 
   // GREEN banner: Data is flowing = healthy
-  if (workerHealthy === true) {
+  if (effectiveHealthy) {
     return (
       <div className="mb-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 flex items-center gap-3">
         <div className="flex items-center gap-2 shrink-0">
           <Wifi className="h-5 w-5 text-emerald-500" />
           <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
           </span>
         </div>
         <div className="flex-1 min-w-0">
@@ -168,7 +169,7 @@ export default function UpstoxReconnectBanner() {
           <p className="text-xs text-emerald-700/70 dark:text-emerald-400/70 mt-0.5">
             Real-time market data is flowing to website users
           </p>
-          
+
           {showResult && reconnectResult?.success && (
             <div className="mt-2 flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
               <CheckCircle2 className="h-3.5 w-3.5" />
@@ -180,15 +181,15 @@ export default function UpstoxReconnectBanner() {
           <button
             onClick={handleRefresh}
             disabled={checking}
+            aria-label="Refresh worker status"
             className="text-emerald-600/50 hover:text-emerald-700 dark:text-emerald-400/50 transition-colors"
-            title="Refresh Status"
           >
             <RefreshCw className={`h-4 w-4 ${checking ? 'animate-spin' : ''}`} />
           </button>
           <button
             onClick={() => setDismissed(true)}
+            aria-label="Dismiss banner"
             className="text-emerald-600/50 hover:text-emerald-700 dark:text-emerald-400/50 transition-colors"
-            title="Dismiss"
           >
             <X className="h-4 w-4" />
           </button>
@@ -197,11 +198,9 @@ export default function UpstoxReconnectBanner() {
     );
   }
 
-  // RED banner: ONLY show when truly disconnected
-  // Don't show if data is actually flowing OR if workerHealthy is true/null
-  if (dataIsFlowing) return null;
+  // RED banner: ONLY show when truly disconnected.
   // If we never got a definitive answer (workerHealthy is null after loading),
-  // don't show scary red banner — show nothing instead
+  // don't show a scary red banner — show nothing instead.
   if (workerHealthy === null) return null;
 
   return (
@@ -219,8 +218,8 @@ export default function UpstoxReconnectBanner() {
 
         {showResult && reconnectResult && (
           <div className={`mt-3 p-2.5 rounded-lg text-xs flex items-start gap-2 ${
-            reconnectResult.success 
-              ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' 
+            reconnectResult.success
+              ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
               : 'bg-red-500/10 text-red-700 dark:text-red-400'
           }`}>
             {reconnectResult.success ? (
@@ -232,17 +231,19 @@ export default function UpstoxReconnectBanner() {
               <p className="font-medium">{reconnectResult.message}</p>
               {reconnectResult.data && (
                 <p className="mt-1 opacity-75">
-                  Token Pushed: {reconnectResult.data.tokenPushed ? 'Yes' : 'No'} | 
+                  Token Pushed: {reconnectResult.data.tokenPushed ? 'Yes' : 'No'} |
                   Final Health: {reconnectResult.data.finalHealth ? 'Healthy' : 'Pending'}
                 </p>
               )}
-              {/* Only show Authorize link when token is truly missing */}
+              {/* Authorize link comes from the server response (env-based).
+                  The hardcoded client_id/redirect URL was removed from the
+                  client bundle — it leaked OAuth credentials. */}
               {!reconnectResult.data?.hasAccessToken && reconnectResult.authUrl && (
-                <a 
+                <a
                   href={reconnectResult.authUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-2 inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 font-medium"
+                  className="mt-2 inline-flex items-center gap-1 text-brand-primary hover:underline font-medium"
                 >
                   <ExternalLink className="h-3 w-3" />
                   Authorize with Upstox
@@ -271,16 +272,6 @@ export default function UpstoxReconnectBanner() {
             )}
           </button>
 
-          <a
-            href="https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=ba78a999-08c9-4d1a-a628-89788c39147d&redirect_uri=https://pepertect.vercel.app/callback"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-bg-surface hover:bg-bg-surface-alt border border-border text-text-secondary text-xs font-medium rounded-lg transition-colors"
-          >
-            <ExternalLink className="h-3 w-3" />
-            Re-authorize Upstox
-          </a>
-
           <button
             onClick={handleRefresh}
             disabled={checking}
@@ -290,9 +281,9 @@ export default function UpstoxReconnectBanner() {
             Check Again
           </button>
         </div>
-        
+
         <p className="text-[10px] text-red-600/50 dark:text-red-400/40 mt-2">
-          Tip: Click "Reconnect WebSocket" to push your access token to the Worker and restart the connection.
+          Tip: Click &quot;Reconnect WebSocket&quot; to push your access token to the Worker and restart the connection.
         </p>
       </div>
       <button
@@ -300,8 +291,8 @@ export default function UpstoxReconnectBanner() {
           setDismissed(true);
           setShowResult(false);
         }}
+        aria-label="Dismiss banner"
         className="text-red-600/50 hover:text-red-700 dark:text-red-400/50 shrink-0"
-        title="Dismiss"
       >
         <X className="h-4 w-4" />
       </button>

@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { adminFetch } from '@/lib/admin-fetch';
+import { useDebounce } from '@/hooks/use-debounce';
 import { cn } from '@/lib/utils';
 import {
   Star, ThumbsUp, MessageSquare, Search, ChevronLeft, ChevronRight,
-  AlertTriangle, Loader2, CheckCircle2, XCircle, Eye, X, Send, Shield,
-  Image as ImageIcon, Bug, Lightbulb, Clock, Flag, BarChart3, Settings, Trash2, Pencil
+  Loader2, CheckCircle2, XCircle, Eye, X, Send, Shield,
+  Bug, Lightbulb, Clock, Settings, Trash2,
 } from 'lucide-react';
 
 // ── Types ──
@@ -24,13 +25,15 @@ interface AdminReview {
 }
 
 interface Analytics {
-  total: number; pending: number; approved: number; rejected: number;
+  total: number; pending: number; approved: number; rejected: number; hidden: number;
   averageRating: number; ratingDistribution: Record<number, number>;
   categoryBreakdown: { category: string; count: number }[];
   statusBreakdown: { status: string; count: number }[];
   priorityBreakdown: { priority: string; count: number }[];
   recent7Days: number;
 }
+
+const PAGE_SIZE = 20;
 
 // ── Status/Category badge colors ──
 const STATUS_COLORS: Record<string, string> = {
@@ -62,7 +65,7 @@ const FEATURE_STATUS_COLORS: Record<string, string> = {
 // ── Rating Stars ──
 function Stars({ rating }: { rating: number }) {
   return (
-    <div className='flex items-center gap-0.5'>
+    <div className='flex items-center gap-0.5' aria-label={`${rating} out of 5 stars`}>
       {[1, 2, 3, 4, 5].map(i => (
         <Star key={i} className={cn('h-3 w-3', i <= rating ? 'fill-accent-gold text-accent-gold' : 'text-text-tertiary')} />
       ))}
@@ -77,6 +80,13 @@ function ReviewDrawer({ review, onClose, onRefresh }: {
   const [reply, setReply] = useState('');
   const [replying, setReplying] = useState(false);
   const [showScreenshot, setShowScreenshot] = useState(false);
+
+  // Escape closes the drawer (keyboard accessibility)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const handleReply = async () => {
     if (!reply.trim()) return;
@@ -96,13 +106,13 @@ function ReviewDrawer({ review, onClose, onRefresh }: {
   return (
     <>
       {/* Backdrop */}
-      <div className='fixed inset-0 z-40 bg-black/40' onClick={onClose} />
+      <div className='fixed inset-0 z-40 bg-black/40' onClick={onClose} aria-hidden="true" />
       {/* Drawer */}
-      <div className='fixed right-0 top-0 z-50 h-full w-full max-w-lg bg-bg-surface border-l border-border overflow-y-auto custom-scrollbar'>
+      <div className='fixed right-0 top-0 z-50 h-full w-full max-w-lg bg-bg-surface border-l border-border overflow-y-auto custom-scrollbar' role='dialog' aria-modal='true' aria-label='Review detail'>
         {/* Header */}
         <div className='sticky top-0 z-10 flex items-center justify-between border-b border-border bg-bg-surface px-5 py-4'>
           <h2 className='font-heading text-base font-semibold text-text-primary'>Review Detail</h2>
-          <button onClick={onClose} className='text-text-tertiary hover:text-text-primary'><X className='h-5 w-5' /></button>
+          <button onClick={onClose} aria-label='Close review detail' className='text-text-tertiary hover:text-text-primary'><X className='h-5 w-5' /></button>
         </div>
         <div className='p-5 space-y-5'>
           {/* User info */}
@@ -161,7 +171,7 @@ function ReviewDrawer({ review, onClose, onRefresh }: {
               {review.screenshotUrl && (
                 <div>
                   <p className='text-[10px] text-text-tertiary'>Screenshot</p>
-                  <button onClick={() => setShowScreenshot(true)} className='mt-1 rounded-lg border border-border overflow-hidden hover:border-brand-primary transition-colors'>
+                  <button onClick={() => setShowScreenshot(true)} className='mt-1 rounded-lg border border-border overflow-hidden hover:border-brand-primary transition-colors' aria-label='View screenshot'>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={review.screenshotUrl} alt='Bug screenshot' className='h-32 w-auto object-cover' />
                   </button>
@@ -209,9 +219,9 @@ function ReviewDrawer({ review, onClose, onRefresh }: {
 
           {/* Reply form */}
           <div>
-            <p className='text-xs font-medium text-text-secondary mb-2'>Add Reply</p>
-            <textarea value={reply} onChange={e => setReply(e.target.value)} rows={3} maxLength={1000} placeholder='Type your response...' className='w-full rounded-lg border border-border bg-bg-surface-alt px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:border-brand-primary transition-colors resize-none' />
-            <button onClick={handleReply} disabled={replying || !reply.trim()} className='mt-2 flex items-center gap-1.5 rounded-lg bg-brand-primary px-4 py-2 text-xs font-medium text-white hover:bg-brand-primary-hover transition-colors disabled:opacity-50'>
+            <label htmlFor='review-reply' className='text-xs font-medium text-text-secondary mb-2 block'>Add Reply</label>
+            <textarea id='review-reply' value={reply} onChange={e => setReply(e.target.value)} rows={3} maxLength={1000} placeholder='Type your response...' className='w-full rounded-lg border border-border bg-bg-surface-alt px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:border-brand-primary transition-colors resize-none' />
+            <button onClick={handleReply} disabled={replying || !reply.trim()} className='mt-2 flex items-center gap-1.5 rounded-lg bg-brand-primary px-4 py-2 text-xs font-medium text-white hover:bg-brand-primary-hover transition-colors disabled:opacity-50 disabled:pointer-events-none'>
               {replying ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <Send className='h-3.5 w-3.5' />}
               Send Reply
             </button>
@@ -243,27 +253,41 @@ function StatusDropdown({ reviewId, field, value, options, colors, onRefresh }: 
   onRefresh: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click (dropdown previously stayed open forever)
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
   const handleChange = async (newVal: string) => {
     setOpen(false);
     if (newVal === value) return;
     try {
-      await adminFetch(`/api/admin/reviews/${reviewId}`, {
+      const res = await adminFetch(`/api/admin/reviews/${reviewId}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [field]: newVal }),
       });
-      onRefresh();
+      if (res.success) onRefresh();
     } catch { /* ignore */ }
   };
 
   return (
-    <div className='relative'>
-      <button onClick={() => setOpen(!open)} className={cn('pill cursor-pointer', colors[value] || '')}>
+    <div className='relative' ref={ref}>
+      <button onClick={() => setOpen(!open)} aria-haspopup='listbox' aria-expanded={open} aria-label={`Change ${field}, current: ${value.replace(/_/g, ' ')}`}
+        className={cn('pill cursor-pointer', colors[value] || '')}>
         {value.replace(/_/g, ' ')}
       </button>
       {open && (
-        <div className='absolute left-0 top-full mt-1 z-10 min-w-[140px] rounded-lg border border-border bg-bg-surface py-1 shadow-lg'>
+        <div className='absolute left-0 top-full mt-1 z-10 min-w-[140px] rounded-lg border border-border bg-bg-surface py-1 shadow-lg' role='listbox'>
           {options.map(o => (
-            <button key={o} onClick={() => handleChange(o)} className={cn('w-full px-3 py-1.5 text-left text-xs transition-colors', o === value ? 'bg-tint-blue text-brand-primary font-medium' : 'text-text-secondary hover:bg-bg-surface-alt')}>
+            <button key={o} role='option' aria-selected={o === value} onClick={() => handleChange(o)}
+              className={cn('w-full px-3 py-1.5 text-left text-xs transition-colors', o === value ? 'bg-tint-blue text-brand-primary font-medium' : 'text-text-secondary hover:bg-bg-surface-alt')}>
               {o.replace(/_/g, ' ')}
             </button>
           ))}
@@ -279,7 +303,9 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    adminFetch('/api/admin/reviews/settings').then((d: any) => { if (d.success) setSettings(d.data); });
+    adminFetch('/api/admin/reviews/settings')
+      .then((d: any) => { if (d.success) setSettings(d.data); })
+      .catch(() => {});
   }, []);
 
   const handleToggle = async (key: string) => {
@@ -309,10 +335,10 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div className='fixed inset-0 z-40 bg-black/40' onClick={onClose}>
-      <div className='fixed right-0 top-0 z-50 h-full w-full max-w-md bg-bg-surface border-l border-border overflow-y-auto custom-scrollbar' onClick={e => e.stopPropagation()}>
+      <div className='fixed right-0 top-0 z-50 h-full w-full max-w-md bg-bg-surface border-l border-border overflow-y-auto custom-scrollbar' onClick={e => e.stopPropagation()} role='dialog' aria-modal='true' aria-label='Review settings'>
         <div className='sticky top-0 z-10 flex items-center justify-between border-b border-border bg-bg-surface px-5 py-4'>
           <h2 className='font-heading text-base font-semibold text-text-primary'>Review Settings</h2>
-          <button onClick={onClose} className='text-text-tertiary hover:text-text-primary'><X className='h-5 w-5' /></button>
+          <button onClick={onClose} aria-label='Close review settings' className='text-text-tertiary hover:text-text-primary'><X className='h-5 w-5' /></button>
         </div>
         <div className='p-5 space-y-1'>
           {ITEMS.map(([key, label, desc]) => (
@@ -323,6 +349,10 @@ function SettingsPanel({ onClose }: { onClose: () => void }) {
               </div>
               <button
                 onClick={() => handleToggle(key)}
+                role='switch'
+                aria-checked={!!settings[key]}
+                aria-label={label}
+                disabled={saving}
                 className={cn('relative h-6 w-11 rounded-full transition-colors shrink-0', settings[key] ? 'bg-brand-primary' : 'bg-bg-surface-alt')}
               >
                 <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform', settings[key] ? 'left-[22px]' : 'left-0.5')} />
@@ -344,20 +374,33 @@ export default function ReviewsPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
-  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebounce(searchInput, 350); // debounce: no request per keystroke
   const [loading, setLoading] = useState(true);
-  const [selectedReview, setSelectedReview] = useState<AdminReview | null>(null);
+  // BUG FIX: track the selected review by ID and derive the object from the
+  // (refreshed) list — the drawer previously kept a stale snapshot, so new
+  // replies / status changes never appeared until it was closed & reopened.
+  const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const abortRef = useRef<AbortController | null>(null);
 
   const fetchReviews = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     try {
-      const params = new URLSearchParams({ page: String(page), limit: '20', status: statusFilter, category: categoryFilter, priority: priorityFilter, search });
-      const data = await adminFetch(`/api/admin/reviews?${params}`);
-      if (data.success) { setReviews(data.data.items); setTotal(data.data.total); }
-    } catch { /* ignore */ }
-    setLoading(false);
+      const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE), status: statusFilter, category: categoryFilter, priority: priorityFilter, search });
+      const data = await adminFetch(`/api/admin/reviews?${params}`, { signal: controller.signal });
+      if (data.success && !controller.signal.aborted) {
+        setReviews(data.data.items);
+        setTotal(data.data.total);
+      }
+    } catch { /* ignore (aborted or expired) */ }
+    if (!controller.signal.aborted) setLoading(false);
   }, [page, statusFilter, categoryFilter, priorityFilter, search]);
 
   const fetchAnalytics = useCallback(async () => {
@@ -367,15 +410,34 @@ export default function ReviewsPage() {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { fetchReviews(); fetchAnalytics(); }, [fetchReviews, fetchAnalytics]);
+  useEffect(() => {
+    fetchReviews();
+    return () => { abortRef.current?.abort(); };
+  }, [fetchReviews]);
+
+  useEffect(() => { fetchAnalytics(); }, [fetchAnalytics]);
+
+  // If the last item on the last page is deleted, clamp the page number
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const handleAction = async (id: string, body: Record<string, string>) => {
     setActionLoading(id);
+    setActionError(null);
     try {
-      await adminFetch(`/api/admin/reviews/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      fetchReviews(); fetchAnalytics();
-      if (selectedReview?.id === id) setSelectedReview(null);
-    } catch { /* ignore */ }
+      const res = await adminFetch(`/api/admin/reviews/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      // BUG FIX: previously res.success was ignored — failures silently "succeeded"
+      if (res.success) {
+        fetchReviews(); fetchAnalytics();
+      } else {
+        setActionError(res.error || 'Update failed — please retry');
+        setTimeout(() => setActionError(null), 4000);
+      }
+    } catch { /* ignore (Session expired redirects) */ }
     setActionLoading(null);
   };
 
@@ -383,13 +445,23 @@ export default function ReviewsPage() {
     if (!confirm('Delete this review permanently?')) return;
     setActionLoading(id);
     try {
-      await adminFetch(`/api/admin/reviews/${id}`, { method: 'DELETE' });
-      fetchReviews(); fetchAnalytics(); setSelectedReview(null);
+      const res = await adminFetch(`/api/admin/reviews/${id}`, { method: 'DELETE' });
+      if (res.success) {
+        fetchReviews(); fetchAnalytics();
+        setSelectedReviewId(null); // drawer may hold the deleted review
+      }
     } catch { /* ignore */ }
     setActionLoading(null);
   };
 
-  const totalPages = Math.ceil(total / 20);
+  // Derive drawer content from the live list (stays fresh after refresh)
+  const selectedReview = selectedReviewId ? reviews.find(r => r.id === selectedReviewId) ?? null : null;
+  // If the selected review is filtered out of the current view, close the drawer
+  useEffect(() => {
+    if (selectedReviewId && !loading && !selectedReview && reviews.length >= 0 && total === 0) {
+      setSelectedReviewId(null);
+    }
+  }, [selectedReviewId, selectedReview, loading, reviews.length, total]);
 
   return (
     <div className='space-y-4'>
@@ -399,18 +471,19 @@ export default function ReviewsPage() {
           <h1 className='font-heading text-xl font-bold text-text-primary'>Reviews & Feedback</h1>
           <p className='text-xs text-text-secondary mt-0.5'>Manage user reviews, bug reports, and feature requests</p>
         </div>
-        <button onClick={() => setShowSettings(true)} className='flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-medium text-text-secondary hover:bg-bg-surface-alt transition-colors'>
+        <button onClick={() => setShowSettings(true)} aria-label='Open review settings' className='flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-medium text-text-secondary hover:bg-bg-surface-alt transition-colors'>
           <Settings className='h-3.5 w-3.5' /> Settings
         </button>
       </div>
 
       {/* KPI Cards */}
       {analytics && (
-        <div className='grid grid-cols-2 lg:grid-cols-4 gap-3'>
+        <div className='grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3'>
           <KpiCard icon={Star} color='blue' label='Total Reviews' value={analytics.total} />
           <KpiCard icon={Clock} color='orange' label='Pending' value={analytics.pending} />
           <KpiCard icon={CheckCircle2} color='green' label='Approved' value={analytics.approved} />
           <KpiCard icon={XCircle} color='red' label='Rejected' value={analytics.rejected} />
+          <KpiCard icon={Eye} color='purple' label='Hidden' value={analytics.hidden} />
         </div>
       )}
 
@@ -445,26 +518,37 @@ export default function ReviewsPage() {
       <div className='card-soft p-4'>
         <div className='flex flex-wrap gap-3'>
           <div className='relative flex-1 min-w-[200px]'>
-            <Search className='absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-tertiary' />
-            <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} placeholder='Search reviews, users...' className='w-full rounded-lg border border-border bg-bg-surface pl-9 pr-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:border-brand-primary transition-colors' />
+            <Search className='absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-tertiary' aria-hidden='true' />
+            <label htmlFor='review-search' className='sr-only'>Search reviews</label>
+            <input id='review-search' value={searchInput} onChange={e => { setSearchInput(e.target.value); setPage(1); }} placeholder='Search reviews, users...' className='w-full rounded-lg border border-border bg-bg-surface pl-9 pr-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:border-brand-primary transition-colors' />
           </div>
-          <div className='flex rounded-lg border border-border overflow-hidden'>
+          <div className='flex rounded-lg border border-border overflow-hidden' role='group' aria-label='Filter by status'>
             {['', 'PENDING', 'APPROVED', 'REJECTED', 'HIDDEN'].map(s => (
-              <button key={s || 'ALL'} onClick={() => { setStatusFilter(s); setPage(1); }} className={cn('px-3 py-1.5 text-xs font-medium transition-colors', statusFilter === s ? 'bg-brand-primary text-white' : 'text-text-secondary hover:bg-bg-surface-alt')}>{s || 'All'}</button>
+              <button key={s || 'ALL'} onClick={() => { setStatusFilter(s); setPage(1); }} aria-pressed={statusFilter === s}
+                className={cn('px-3 py-1.5 text-xs font-medium transition-colors', statusFilter === s ? 'bg-brand-primary text-white' : 'text-text-secondary hover:bg-bg-surface-alt')}>{s || 'All'}</button>
             ))}
           </div>
-          <div className='flex rounded-lg border border-border overflow-hidden'>
+          <div className='flex rounded-lg border border-border overflow-hidden' role='group' aria-label='Filter by category'>
             {['', 'GENERAL', 'BUG_REPORT', 'FEATURE_REQUEST'].map(c => (
-              <button key={c || 'ALL'} onClick={() => { setCategoryFilter(c); setPage(1); }} className={cn('px-3 py-1.5 text-xs font-medium transition-colors', categoryFilter === c ? 'bg-brand-primary text-white' : 'text-text-secondary hover:bg-bg-surface-alt')}>{c ? c.replace('_', ' ') : 'All'}</button>
+              <button key={c || 'ALL'} onClick={() => { setCategoryFilter(c); setPage(1); }} aria-pressed={categoryFilter === c}
+                className={cn('px-3 py-1.5 text-xs font-medium transition-colors', categoryFilter === c ? 'bg-brand-primary text-white' : 'text-text-secondary hover:bg-bg-surface-alt')}>{c ? c.replace('_', ' ') : 'All'}</button>
             ))}
           </div>
-          <div className='flex rounded-lg border border-border overflow-hidden'>
+          <div className='flex rounded-lg border border-border overflow-hidden' role='group' aria-label='Filter by priority'>
             {['', 'LOW', 'NORMAL', 'HIGH', 'URGENT'].map(p => (
-              <button key={p || 'ALL'} onClick={() => { setPriorityFilter(p); setPage(1); }} className={cn('px-2.5 py-1.5 text-xs font-medium transition-colors', priorityFilter === p ? 'bg-brand-primary text-white' : 'text-text-secondary hover:bg-bg-surface-alt')}>{p || 'All'}</button>
+              <button key={p || 'ALL'} onClick={() => { setPriorityFilter(p); setPage(1); }} aria-pressed={priorityFilter === p}
+                className={cn('px-2.5 py-1.5 text-xs font-medium transition-colors', priorityFilter === p ? 'bg-brand-primary text-white' : 'text-text-secondary hover:bg-bg-surface-alt')}>{p || 'All'}</button>
             ))}
           </div>
         </div>
       </div>
+
+      {actionError && (
+        <div className='flex items-center gap-2 rounded-lg bg-tint-red/50 border border-loss-red/20 px-3 py-2' role='alert'>
+          <XCircle className='h-4 w-4 text-loss-red shrink-0' />
+          <p className='text-xs text-loss-red font-medium'>{actionError}</p>
+        </div>
+      )}
 
       {/* Table */}
       <div className='card-soft overflow-hidden'>
@@ -509,18 +593,18 @@ export default function ReviewsPage() {
                     <td className='px-4 py-3 text-[10px] text-text-tertiary'>{new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</td>
                     <td className='px-4 py-3 text-right'>
                       <div className='flex items-center justify-end gap-1'>
-                        <button onClick={() => setSelectedReview(r)} className='p-1.5 rounded-lg text-text-tertiary hover:text-brand-primary hover:bg-tint-blue transition-colors'><Eye className='h-3.5 w-3.5' /></button>
+                        <button onClick={() => setSelectedReviewId(r.id)} aria-label={`View review: ${r.title}`} className='p-1.5 rounded-lg text-text-tertiary hover:text-brand-primary hover:bg-tint-blue transition-colors'><Eye className='h-3.5 w-3.5' /></button>
                         {r.status === 'PENDING' && (
-                          <button onClick={() => handleAction(r.id, { status: 'APPROVED' })} disabled={actionLoading === r.id} className='p-1.5 rounded-lg text-text-tertiary hover:text-profit-green hover:bg-tint-green transition-colors' title='Approve'>
+                          <button onClick={() => handleAction(r.id, { status: 'APPROVED' })} disabled={actionLoading === r.id} aria-label='Approve review' className='p-1.5 rounded-lg text-text-tertiary hover:text-profit-green hover:bg-tint-green transition-colors' title='Approve'>
                             {actionLoading === r.id ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <CheckCircle2 className='h-3.5 w-3.5' />}
                           </button>
                         )}
                         {r.status !== 'REJECTED' && r.status !== 'HIDDEN' && (
-                          <button onClick={() => handleAction(r.id, { status: 'REJECTED' })} disabled={actionLoading === r.id} className='p-1.5 rounded-lg text-text-tertiary hover:text-loss-red hover:bg-tint-red transition-colors' title='Reject'>
+                          <button onClick={() => handleAction(r.id, { status: 'REJECTED' })} disabled={actionLoading === r.id} aria-label='Reject review' className='p-1.5 rounded-lg text-text-tertiary hover:text-loss-red hover:bg-tint-red transition-colors' title='Reject'>
                             {actionLoading === r.id ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <XCircle className='h-3.5 w-3.5' />}
                           </button>
                         )}
-                        <button onClick={() => handleDelete(r.id)} className='p-1.5 rounded-lg text-text-tertiary hover:text-loss-red hover:bg-tint-red transition-colors' title='Delete'><Trash2 className='h-3.5 w-3.5' /></button>
+                        <button onClick={() => handleDelete(r.id)} aria-label='Delete review' className='p-1.5 rounded-lg text-text-tertiary hover:text-loss-red hover:bg-tint-red transition-colors' title='Delete'><Trash2 className='h-3.5 w-3.5' /></button>
                       </div>
                     </td>
                   </tr>
@@ -534,15 +618,17 @@ export default function ReviewsPage() {
           <div className='flex items-center justify-between px-4 py-3 border-t border-border'>
             <p className='text-xs text-text-secondary'>Page {page} of {totalPages} ({total} total)</p>
             <div className='flex gap-1'>
-              <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} className='flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-bg-surface-alt disabled:opacity-40'><ChevronLeft className='h-4 w-4' /></button>
-              <button disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))} className='flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-bg-surface-alt disabled:opacity-40'><ChevronRight className='h-4 w-4' /></button>
+              <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} aria-label='Previous page'
+                className='flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-bg-surface-alt disabled:opacity-40 disabled:pointer-events-none'><ChevronLeft className='h-4 w-4' /></button>
+              <button disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))} aria-label='Next page'
+                className='flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-bg-surface-alt disabled:opacity-40 disabled:pointer-events-none'><ChevronRight className='h-4 w-4' /></button>
             </div>
           </div>
         )}
       </div>
 
-      {/* Review Detail Drawer */}
-      {selectedReview && <ReviewDrawer review={selectedReview} onClose={() => setSelectedReview(null)} onRefresh={() => { fetchReviews(); fetchAnalytics(); }} />}
+      {/* Review Detail Drawer — derived from live list */}
+      {selectedReview && <ReviewDrawer review={selectedReview} onClose={() => setSelectedReviewId(null)} onRefresh={() => { fetchReviews(); fetchAnalytics(); }} />}
 
       {/* Settings Panel */}
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}

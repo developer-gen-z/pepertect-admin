@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { adminFetch } from '@/lib/admin-fetch';
+import { useDebounce } from '@/hooks/use-debounce';
 import { cn, formatNumber } from '@/lib/utils';
-import { TrendingUp, Loader2, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { TrendingUp, Search, ChevronLeft, ChevronRight, BarChart3 } from 'lucide-react';
 
 interface StockRow {
   id: string; symbol: string; name: string; exchange: string; segment: string;
@@ -24,22 +25,34 @@ export default function MarketPage() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebounce(searchInput, 350); // debounce: no request per keystroke
   const [tab, setTab] = useState<'stocks' | 'indices'>('stocks');
+
+  const abortRef = useRef<AbortController | null>(null);
 
   const fetchMarket = useCallback(async () => {
     if (!token) return;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     try {
       const params = new URLSearchParams({ type: tab, page: String(page), limit: '20' });
       if (search) params.set('search', search);
-      const data = await adminFetch(`/api/admin/market?${params}`);
-      if (data.success) { setItems(data.data.items); setTotalPages(data.data.pages); }
-    } catch (err) { if (!(err instanceof Error && err.message === 'Session expired')) console.error(err); }
-    finally { setLoading(false); }
+      const data = await adminFetch(`/api/admin/market?${params}`, { signal: controller.signal });
+      if (data.success && !controller.signal.aborted) { setItems(data.data.items); setTotalPages(data.data.pages); }
+    } catch (err) {
+      const aborted = err instanceof DOMException && err.name === 'AbortError';
+      if (!aborted && !(err instanceof Error && err.message === 'Session expired')) console.error(err);
+    }
+    finally { if (!controller.signal.aborted) setLoading(false); }
   }, [token, page, search, tab]);
 
-  useEffect(() => { fetchMarket(); }, [fetchMarket]);
+  useEffect(() => {
+    fetchMarket();
+    return () => { abortRef.current?.abort(); };
+  }, [fetchMarket]);
 
   return (
     <div className="space-y-5">
@@ -59,8 +72,9 @@ export default function MarketPage() {
             ))}
           </div>
           <div className="relative flex-1 max-w-xs">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-tertiary" />
-            <input type="text" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-tertiary" aria-hidden="true" />
+            <label htmlFor="market-search" className="sr-only">Search {tab}</label>
+            <input id="market-search" type="text" value={searchInput} onChange={(e) => { setSearchInput(e.target.value); setPage(1); }}
               placeholder={`Search ${tab}...`}
               className="w-full h-10 rounded-lg border border-border bg-bg-surface pl-10 pr-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-brand-primary/30" />
           </div>
@@ -100,13 +114,20 @@ export default function MarketPage() {
               })}
             </tbody>
           </table>
+          {!loading && items.length === 0 && (
+            <div className="py-12 text-center">
+              <BarChart3 className="h-10 w-10 text-text-tertiary mx-auto mb-3" aria-hidden="true" />
+              <p className="text-sm font-medium text-text-primary">No {tab} found</p>
+              <p className="text-xs text-text-secondary mt-1">Try a different search term</p>
+            </div>
+          )}
         </div>
         {totalPages > 1 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-border">
             <p className="text-xs text-text-secondary">Page {page} of {totalPages}</p>
             <div className="flex gap-1">
-              <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-bg-surface-alt disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
-              <button disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))} className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-bg-surface-alt disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
+              <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} aria-label="Previous page" className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-bg-surface-alt disabled:opacity-40 disabled:pointer-events-none"><ChevronLeft className="h-4 w-4" /></button>
+              <button disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))} aria-label="Next page" className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-bg-surface-alt disabled:opacity-40 disabled:pointer-events-none"><ChevronRight className="h-4 w-4" /></button>
             </div>
           </div>
         )}

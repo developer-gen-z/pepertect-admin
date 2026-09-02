@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { adminFetch } from '@/lib/admin-fetch';
 import { cn, timeAgo } from '@/lib/utils';
-import { LifeBuoy, Loader2, ChevronLeft, ChevronRight, MessageSquare, Clock, AlertTriangle } from 'lucide-react';
+import { LifeBuoy, ChevronLeft, ChevronRight, MessageSquare } from 'lucide-react';
 
 interface TicketRow {
   id: string; userId: string; subject: string; status: string; priority: string;
@@ -94,13 +94,20 @@ export default function TicketsPage() {
               ))}
             </tbody>
           </table>
+          {!loading && tickets.length === 0 && (
+            <div className="py-12 text-center">
+              <LifeBuoy className="h-10 w-10 text-text-tertiary mx-auto mb-3" aria-hidden="true" />
+              <p className="text-sm font-medium text-text-primary">No tickets found</p>
+              <p className="text-xs text-text-secondary mt-1">Try adjusting the status or priority filters</p>
+            </div>
+          )}
         </div>
         {totalPages > 1 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-border">
             <p className="text-xs text-text-secondary">Page {page} of {totalPages}</p>
             <div className="flex gap-1">
-              <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-bg-surface-alt disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
-              <button disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))} className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-bg-surface-alt disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
+              <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} aria-label="Previous page" className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-bg-surface-alt disabled:opacity-40 disabled:pointer-events-none"><ChevronLeft className="h-4 w-4" /></button>
+              <button disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))} aria-label="Next page" className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-bg-surface-alt disabled:opacity-40 disabled:pointer-events-none"><ChevronRight className="h-4 w-4" /></button>
             </div>
           </div>
         )}

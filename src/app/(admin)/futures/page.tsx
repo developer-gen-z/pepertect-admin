@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { adminFetch } from '@/lib/admin-fetch';
 import { cn, formatNumber, timeAgo } from '@/lib/utils';
-import { TrendingUp, Loader2, ChevronLeft, ChevronRight, Database } from 'lucide-react';
+import { TrendingUp, ChevronLeft, ChevronRight, Database } from 'lucide-react';
 
 interface FutureRow {
   id: string;

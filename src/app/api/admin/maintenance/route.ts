@@ -5,7 +5,7 @@ import { verifyToken, extractBearerToken } from '@/lib/auth';
 /**
  * Maintenance Mode API
  *
- * GET  /api/admin/maintenance  → returns { enabled, message, updatedAt }
+ * GET  /api/admin/maintenance  → returns { enabled, message, updatedAt } (admin-auth)
  * PUT   /api/admin/maintenance  → body { enabled: boolean, message?: string }
  *
  * Stores state in the shared `platform_settings` table so the main
@@ -16,12 +16,16 @@ async function readMaintenance() {
     where: { key: { in: ['maintenance_enabled', 'maintenance_message'] } },
   });
   const map = new Map(rows.map((r) => [r.key, r.value]));
+  // FIX: use the maintenance_enabled row's timestamp (previously used
+  // whichever row Prisma happened to return first — could be the message
+  // row, showing a wrong "last changed" time)
+  const enabledRow = rows.find((r) => r.key === 'maintenance_enabled');
   return {
     enabled: map.get('maintenance_enabled') === 'true',
     message:
       map.get('maintenance_message') ||
       "We're performing scheduled maintenance to improve your experience. We'll be back shortly!",
-    updatedAt: rows[0]?.updatedAt?.toISOString() || null,
+    updatedAt: enabledRow?.updatedAt?.toISOString() || null,
   };
 }
 
@@ -33,8 +37,15 @@ async function upsertSetting(key: string, value: string) {
   });
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    // FIX: GET previously had NO auth check (every other admin route does)
+    const token = extractBearerToken(req.headers.get('authorization'));
+    const payload = token ? await verifyToken(token) : null;
+    if (!payload || payload.role !== 'ADMIN') {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
     const data = await readMaintenance();
     return NextResponse.json({ success: true, data });
   } catch (error: unknown) {

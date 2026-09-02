@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { adminFetch } from '@/lib/admin-fetch';
 import { cn, formatINR, formatNumber, formatDateTime, timeAgo } from '@/lib/utils';
+import Link from 'next/link';
 import {
   ArrowLeft, User, Mail, Phone, Shield, Crown, Wallet,
   ShoppingCart, Briefcase, TrendingUp, Calendar, Clock,
@@ -16,10 +17,9 @@ interface UserDetails {
   id: string; name: string | null; email: string; phone: string | null;
   role: string; tier: string; virtualCapital: number; isActive: boolean;
   twoFactorEnabled: boolean; language: string; createdAt: string; updatedAt: string;
-  notifSettings: unknown;
-  portfolio: { id: string; totalBalance: number; investedAmount: number; availableMargin: number; totalPnl: number; realizedPnl: number; unrealizedPnl: number; winRate: number; totalTrades: number; winningTrades: number } | null;
+  portfolio: { id: string; totalBalance: number; investedAmount: number; availableMargin: number; totalPnl: number; realizedPnl: number; unrealizedPnl: number; dayPnl: number; winRate: number; totalTrades: number; winningTrades: number } | null;
   subscriptions: { id: string; plan: string; status: string; startDate: string; endDate: string | null; razorpaySubId: string | null }[];
-  positions: { id: string; symbol: string; side: string; quantity: number; avgPrice: number; pnl: number; status: string; segment: string; openedAt: string }[];
+  positions: { id: string; symbol: string; side: string; quantity: number; avgPrice: number; pnl: number; pnlPct: number; status: string; segment: string; openedAt: string }[];
   activityLogs: { id: string; action: string; ip: string | null; createdAt: string }[];
   supportTickets: { id: string; subject: string; status: string; priority: string; createdAt: string }[];
   _count: { orders: number; trades: number; watchlist: number; notifications: number };
@@ -153,13 +153,38 @@ export default function UserDetailPage() {
         <div className="card-soft p-5">
           <h2 className="font-heading text-base font-semibold text-text-primary mb-4 flex items-center gap-2"><TrendingUp className="h-4 w-4" /> Portfolio</h2>
           <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-            <div><p className="text-xs text-text-secondary">Balance</p><p className="font-mono text-sm font-bold text-text-primary">{formatINR(user.portfolio.totalBalance)}</p></div>
-            <div><p className="text-xs text-text-secondary">Invested</p><p className="font-mono text-sm font-bold text-text-primary">{formatINR(user.portfolio.investedAmount)}</p></div>
-            <div><p className="text-xs text-text-secondary">P&L</p><p className={cn('font-mono text-sm font-bold', user.portfolio.totalPnl >= 0 ? 'text-profit-green' : 'text-loss-red')}>{formatINR(user.portfolio.totalPnl)}</p></div>
+            <div><p className="text-xs text-text-secondary">Balance</p><p className="font-mono text-sm font-bold text-text-primary">{formatINR(Number(user.portfolio.totalBalance))}</p></div>
+            <div><p className="text-xs text-text-secondary">Invested</p><p className="font-mono text-sm font-bold text-text-primary">{formatINR(Number(user.portfolio.investedAmount))}</p></div>
+            <div><p className="text-xs text-text-secondary">P&L</p><p className={cn('font-mono text-sm font-bold', Number(user.portfolio.totalPnl) >= 0 ? 'text-profit-green' : 'text-loss-red')}>{formatINR(Number(user.portfolio.totalPnl))}</p></div>
             <div><p className="text-xs text-text-secondary">Win Rate</p><p className="font-mono text-sm font-bold text-brand-primary">{user.portfolio.winRate}%</p></div>
           </div>
         </div>
       )}
+
+      {/* Open Positions — previously fetched but never rendered */}
+      <div className="card-soft p-5">
+        <h2 className="font-heading text-base font-semibold text-text-primary mb-4 flex items-center gap-2"><Briefcase className="h-4 w-4" /> Open Positions</h2>
+        {user.positions.length === 0 ? <p className="text-sm text-text-secondary">No open positions</p> : (
+          <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar">
+            {user.positions.map(p => (
+              <div key={p.id} className="flex items-center justify-between p-3 rounded-xl bg-bg-surface-alt">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm font-semibold text-text-primary">{p.symbol}</span>
+                    <span className={cn('pill', p.side === 'LONG' ? 'bg-tint-green text-profit-green' : 'bg-tint-red text-loss-red')}>{p.side}</span>
+                    <span className="pill bg-bg-surface text-text-secondary">{p.segment}</span>
+                  </div>
+                  <p className="text-[11px] text-text-secondary mt-1">{p.quantity} qty @ ₹{formatNumber(p.avgPrice)} · opened {timeAgo(p.openedAt)}</p>
+                </div>
+                <div className="text-right shrink-0 ml-3">
+                  <p className={cn('font-mono text-sm font-bold', Number(p.pnl) >= 0 ? 'text-profit-green' : 'text-loss-red')}>{formatINR(Number(p.pnl))}</p>
+                  <p className={cn('text-[10px] font-mono', Number(p.pnlPct) >= 0 ? 'text-profit-green' : 'text-loss-red')}>{Number(p.pnlPct) >= 0 ? '+' : ''}{Number(p.pnlPct).toFixed(2)}%</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Subscriptions */}
       <div className="card-soft p-5">
@@ -177,6 +202,26 @@ export default function UserDetailPage() {
                   <p className="text-[11px] text-text-secondary mt-1">{formatDateTime(s.startDate)} — {s.endDate ? formatDateTime(s.endDate) : 'Ongoing'}</p>
                 </div>
               </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Recent Support Tickets — previously fetched but never rendered */}
+      <div className="card-soft p-5">
+        <h2 className="font-heading text-base font-semibold text-text-primary mb-4 flex items-center gap-2"><MessageSquare className="h-4 w-4" /> Recent Support Tickets</h2>
+        {user.supportTickets.length === 0 ? <p className="text-sm text-text-secondary">No support tickets</p> : (
+          <div className="space-y-2">
+            {user.supportTickets.map(t => (
+              <Link key={t.id} href={`/tickets/${t.id}`} className="flex items-center justify-between p-3 rounded-xl bg-bg-surface-alt hover:bg-bg-surface transition-colors group">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-text-primary truncate group-hover:text-brand-primary transition-colors">{t.subject}</p>
+                  <p className="text-[11px] text-text-secondary mt-0.5">{timeAgo(t.createdAt)}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0 ml-3">
+                  <span className={cn('pill', t.status === 'OPEN' ? 'bg-tint-red text-loss-red' : t.status === 'IN_PROGRESS' ? 'bg-tint-yellow text-warning-amber' : t.status === 'RESOLVED' ? 'bg-tint-green text-profit-green' : 'bg-bg-surface text-text-secondary')}>{t.status.replace('_', ' ')}</span>
+                </div>
+              </Link>
             ))}
           </div>
         )}

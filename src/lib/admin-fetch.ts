@@ -8,6 +8,8 @@ import { useAuthStore } from '@/stores/useAuthStore';
  *  - Detects 401 / "Unauthorized" responses (expired or invalid token)
  *  - On expired session: clears stale auth state and redirects to /login
  *    so the user never sees a silently-empty dashboard full of zeros.
+ *  - Supports AbortSignal via options.signal (cancels in-flight requests
+ *    when a newer one supersedes it — prevents stale-response races).
  */
 export async function adminFetch<T = any>(url: string, options: RequestInit = {}): Promise<T> {
   const token = useAuthStore.getState().token;

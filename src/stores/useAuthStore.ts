@@ -31,12 +31,16 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'pepertect-admin-auth',
       storage: createJSONStorage(() => localStorage),
-      partialize: (s) => ({ 
-        admin: s.admin, 
-        token: s.token, 
-        isAuthenticated: s.isAuthenticated 
+      partialize: (s) => ({
+        admin: s.admin,
+        token: s.token,
+        isAuthenticated: s.isAuthenticated
       }),
-      // Fix: Don't rehydrate if no saved state exists
+      // SSR-safety fix: previously the store rehydrated synchronously at import
+      // time, so the client's first render (authenticated) mismatched the
+      // server-rendered HTML (loading spinner) → React hydration errors.
+      // With skipHydration we rehydrate manually AFTER mount (see AuthProvider).
+      skipHydration: true,
       onRehydrateStorage: () => (state) => {
         if (state) {
           state.setHydrated();
@@ -45,6 +49,13 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 );
+
+/** Manually rehydrate persisted auth state (client-only, after mount). */
+export function rehydrateAuth() {
+  if (typeof window !== 'undefined') {
+    void useAuthStore.persist.rehydrate();
+  }
+}
 
 // Hook to check if auth store has hydrated
 export function useAuthHydration() {

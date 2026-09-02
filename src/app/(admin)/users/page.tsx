@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { adminFetch } from '@/lib/admin-fetch';
+import { useDebounce } from '@/hooks/use-debounce';
 import { cn, timeAgo } from '@/lib/utils';
 import { Search, Users as UsersIcon, Loader2, ChevronLeft, ChevronRight, Trash2, AlertTriangle, CheckSquare, Square } from 'lucide-react';
 
@@ -18,7 +19,8 @@ export default function UsersPage() {
   const { token } = useAuthStore();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebounce(searchInput, 350); // debounce: no request per keystroke
   const [tierFilter, setTierFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [page, setPage] = useState(1);
@@ -29,24 +31,37 @@ export default function UsersPage() {
   const [deleting, setDeleting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
+  // AbortController ref — cancels the previous in-flight request so an
+  // out-of-order (stale) response can never overwrite newer results.
+  const abortRef = useRef<AbortController | null>(null);
+
   const fetchUsers = useCallback(async () => {
     if (!token) return;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), limit: '20' });
       if (search) params.set('search', search);
       if (tierFilter) params.set('tier', tierFilter);
       if (statusFilter) params.set('isActive', statusFilter);
-      const data = await adminFetch(`/api/admin/users?${params}`);
-      if (data.success) {
+      const data = await adminFetch(`/api/admin/users?${params}`, { signal: controller.signal });
+      if (data.success && !controller.signal.aborted) {
         setUsers(data.data.users);
         setTotalPages(data.data.pages);
       }
-    } catch (err) { if (!(err instanceof Error && err.message === 'Session expired')) console.error(err); }
-    finally { setLoading(false); }
+    } catch (err) {
+      const aborted = err instanceof DOMException && err.name === 'AbortError';
+      if (!aborted && !(err instanceof Error && err.message === 'Session expired')) console.error(err);
+    }
+    finally { if (!controller.signal.aborted) setLoading(false); }
   }, [token, page, search, tierFilter, statusFilter]);
 
-  useEffect(() => { fetchUsers(); }, [fetchUsers]);
+  useEffect(() => {
+    fetchUsers();
+    return () => { abortRef.current?.abort(); };
+  }, [fetchUsers]);
 
   const toggleSelect = (id: string) => {
     setSelected(prev => {
@@ -91,7 +106,7 @@ export default function UsersPage() {
         </div>
         {selected.size > 0 && (
           <div className="flex items-center gap-3">
-            <span className="text-xs font-medium text-text-secondary">{selected.size} selected</span>
+            <span className="text-xs font-medium text-text-secondary" aria-live="polite">{selected.size} selected</span>
             <button
               onClick={() => setShowConfirm(true)}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-loss-red/10 border border-loss-red/20 text-loss-red text-xs font-semibold hover:bg-loss-red/20 transition-colors"
@@ -105,14 +120,14 @@ export default function UsersPage() {
 
       {/* Delete Confirmation Modal */}
       {showConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-confirm-title">
           <div className="card-soft p-6 max-w-sm w-full border border-loss-red/20">
             <div className="flex items-center gap-3 mb-4">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-loss-red/10">
                 <AlertTriangle className="h-5 w-5 text-loss-red" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-text-primary">Delete Users</h3>
+                <h3 id="delete-confirm-title" className="text-base font-semibold text-text-primary">Delete Users</h3>
                 <p className="text-xs text-text-secondary mt-0.5">This action cannot be undone</p>
               </div>
             </div>
@@ -145,25 +160,29 @@ export default function UsersPage() {
       <div className="card-soft p-4">
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-tertiary" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-tertiary" aria-hidden="true" />
+            <label htmlFor="user-search" className="sr-only">Search users by name or email</label>
             <input
-              type="text" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+              id="user-search"
+              type="text" value={searchInput} onChange={(e) => { setSearchInput(e.target.value); setPage(1); }}
               placeholder="Search by name or email..."
               className="w-full h-10 rounded-lg border border-border bg-bg-surface pl-10 pr-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-brand-primary/30 focus:border-brand-primary transition-all"
             />
           </div>
           <div className="flex gap-2">
-            <div className="flex rounded-lg border border-border overflow-hidden">
+            <div className="flex rounded-lg border border-border overflow-hidden" role="group" aria-label="Filter by tier">
               {['', 'FREE', 'PREMIUM'].map((t) => (
                 <button key={t} onClick={() => { setTierFilter(t); setPage(1); }}
+                  aria-pressed={tierFilter === t}
                   className={cn('px-3 py-1.5 text-xs font-medium transition-colors', tierFilter === t ? 'bg-brand-primary text-white' : 'bg-bg-surface text-text-secondary hover:bg-bg-surface-alt')}>
                   {t || 'All'}
                 </button>
               ))}
             </div>
-            <div className="flex rounded-lg border border-border overflow-hidden">
+            <div className="flex rounded-lg border border-border overflow-hidden" role="group" aria-label="Filter by status">
               {['', 'true', 'false'].map((s, i) => (
                 <button key={s} onClick={() => { setStatusFilter(s); setPage(1); }}
+                  aria-pressed={statusFilter === s}
                   className={cn('px-3 py-1.5 text-xs font-medium transition-colors', statusFilter === s ? 'bg-brand-primary text-white' : 'bg-bg-surface text-text-secondary hover:bg-bg-surface-alt')}>
                   {['All', 'Active', 'Inactive'][i]}
                 </button>
@@ -180,7 +199,8 @@ export default function UsersPage() {
             <thead>
               <tr className="border-b border-border">
                 <th className="px-4 py-3 w-10">
-                  <button onClick={toggleAll} className="flex items-center justify-center">
+                  <button onClick={toggleAll} role="checkbox" aria-checked={selected.size === users.length && users.length > 0} aria-label="Select all users on this page"
+                    className="flex items-center justify-center">
                     {selected.size === users.length && users.length > 0
                       ? <CheckSquare className="h-4 w-4 text-brand-primary" />
                       : <Square className="h-4 w-4 text-text-tertiary hover:text-text-secondary" />}
@@ -204,7 +224,8 @@ export default function UsersPage() {
               )) : users.map((u) => (
                 <tr key={u.id} className={cn('border-b border-border hover:bg-bg-surface-alt transition-colors', selected.has(u.id) && 'bg-brand-primary/5')}>
                   <td className="px-4 py-3">
-                    <button onClick={() => toggleSelect(u.id)} className="flex items-center justify-center">
+                    <button onClick={() => toggleSelect(u.id)} role="checkbox" aria-checked={selected.has(u.id)} aria-label={`Select user ${u.name || u.email}`}
+                      className="flex items-center justify-center">
                       {selected.has(u.id)
                         ? <CheckSquare className="h-4 w-4 text-brand-primary" />
                         : <Square className="h-4 w-4 text-text-tertiary hover:text-text-secondary" />}
@@ -248,7 +269,7 @@ export default function UsersPage() {
           </table>
           {!loading && users.length === 0 && (
             <div className="py-12 text-center">
-              <UsersIcon className="h-10 w-10 text-text-tertiary mx-auto mb-3" />
+              <UsersIcon className="h-10 w-10 text-text-tertiary mx-auto mb-3" aria-hidden="true" />
               <p className="text-sm font-medium text-text-primary">No users found</p>
               <p className="text-xs text-text-secondary mt-1">Try adjusting your search or filters</p>
             </div>
@@ -260,11 +281,11 @@ export default function UsersPage() {
           <div className="flex items-center justify-between px-4 py-3 border-t border-border">
             <p className="text-xs text-text-secondary">Page {page} of {totalPages}</p>
             <div className="flex gap-1">
-              <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}
+              <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} aria-label="Previous page"
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-bg-surface-alt disabled:opacity-40 disabled:pointer-events-none">
                 <ChevronLeft className="h-4 w-4" />
               </button>
-              <button disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              <button disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))} aria-label="Next page"
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-bg-surface-alt disabled:opacity-40 disabled:pointer-events-none">
                 <ChevronRight className="h-4 w-4" />
               </button>

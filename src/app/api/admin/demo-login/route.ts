@@ -5,7 +5,7 @@ import { verifyToken, extractBearerToken } from '@/lib/auth';
 /**
  * Demo Login Toggle API
  *
- * GET  /api/admin/demo-login  → returns { enabled, updatedAt }
+ * GET  /api/admin/demo-login  → returns { enabled, updatedAt } (admin-auth)
  * PUT  /api/admin/demo-login  → body { enabled: boolean }
  *
  * Stores state in the shared `platform_settings` table so the main
@@ -29,8 +29,15 @@ async function upsertSetting(key: string, value: string) {
   });
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    // FIX: GET previously had NO auth check (every other admin route does)
+    const token = extractBearerToken(req.headers.get('authorization'));
+    const payload = token ? await verifyToken(token) : null;
+    if (!payload || payload.role !== 'ADMIN') {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
     const data = await readDemoLogin();
     return NextResponse.json({ success: true, data });
   } catch (error: unknown) {
